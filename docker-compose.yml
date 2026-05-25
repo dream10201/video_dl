@@ -8,4 +8,5 @@ services:
       - ./downloads:/app/downloads
     environment:
       API_TOKEN: ${API_TOKEN:?set API_TOKEN}
+      PROXY_URL: ${PROXY_URL:-}
       WORKERS: "1"

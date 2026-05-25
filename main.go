@@ -41,6 +41,7 @@ const (
 type Task struct {
 	ID        string     `json:"id"`
 	URL       string     `json:"url"`
+	UseProxy  bool       `json:"use_proxy"`
 	Status    TaskStatus `json:"status"`
 	Progress  float64    `json:"progress"`
 	FilePath  string     `json:"file_path,omitempty"`
@@ -61,6 +62,7 @@ type Server struct {
 	ytDLP       string
 	ffmpeg      string
 	apiToken    string
+	proxyURL    string
 }
 
 type probeInfo struct {
@@ -104,6 +106,7 @@ func main() {
 	ytDLP := env("YT_DLP_BIN", "yt-dlp")
 	ffmpeg := env("FFMPEG_BIN", "ffmpeg")
 	apiToken := env("API_TOKEN", "")
+	proxyURL := env("PROXY_URL", "")
 	workers := envInt("WORKERS", max(1, min(2, runtime.NumCPU())))
 
 	if apiToken == "" {
@@ -121,6 +124,7 @@ func main() {
 		ytDLP:       ytDLP,
 		ffmpeg:      ffmpeg,
 		apiToken:    apiToken,
+		proxyURL:    proxyURL,
 	}
 	for i := 0; i < workers; i++ {
 		go srv.worker()
@@ -161,7 +165,8 @@ func (s *Server) handleCreateDownload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		URL string `json:"url"`
+		URL      string `json:"url"`
+		UseProxy bool   `json:"proxy"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -172,7 +177,7 @@ func (s *Server) handleCreateDownload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	task := s.enqueue(req.URL)
+	task := s.enqueue(req.URL, req.UseProxy)
 	writeJSON(w, http.StatusCreated, task)
 }
 
@@ -190,7 +195,8 @@ func (s *Server) handleUITasks(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"tasks": tasks})
 	case http.MethodPost:
 		var req struct {
-			URL string `json:"url"`
+			URL      string `json:"url"`
+			UseProxy bool   `json:"proxy"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid json")
@@ -201,7 +207,7 @@ func (s *Server) handleUITasks(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		task := s.enqueue(req.URL)
+		task := s.enqueue(req.URL, req.UseProxy)
 		writeJSON(w, http.StatusCreated, task)
 	default:
 		w.Header().Set("Allow", "GET, POST")
@@ -244,10 +250,11 @@ func (s *Server) handleUITask(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
-func (s *Server) enqueue(rawURL string) *Task {
+func (s *Server) enqueue(rawURL string, useProxy bool) *Task {
 	task := &Task{
 		ID:        newID(),
 		URL:       rawURL,
+		UseProxy:  useProxy,
 		Status:    StatusQueued,
 		CreatedAt: time.Now().UTC(),
 		Logs:      []string{"任务已创建，等待下载"},
@@ -279,9 +286,19 @@ func (s *Server) runTask(id string) {
 	task.Logs = append(task.Logs, "开始分析页面视频")
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancelFuncs[id] = cancel
+	useProxy := task.UseProxy
 	s.mu.Unlock()
 
-	target, err := s.selectDownloadTarget(ctx, task.URL)
+	proxyURL, err := s.proxyForTask(useProxy)
+	if err != nil {
+		s.finishTask(id, StatusFailed, "", err.Error())
+		return
+	}
+	if proxyURL != "" {
+		s.addLog(id, "本任务启用代理")
+	}
+
+	target, err := s.selectDownloadTarget(ctx, task.URL, proxyURL)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			s.finishTask(id, StatusCanceled, "", "任务已取消")
@@ -303,6 +320,9 @@ func (s *Server) runTask(id string) {
 		"--ffmpeg-location", s.ffmpeg,
 		"--output", outputTemplate,
 		"--print", "after_move:filepath",
+	}
+	if proxyURL != "" {
+		args = append(args, "--proxy", proxyURL)
 	}
 	if target.PlaylistItem > 0 {
 		args = append(args, "--playlist-items", strconv.Itoa(target.PlaylistItem))
@@ -356,9 +376,22 @@ func (s *Server) runTask(id string) {
 	s.finishTask(id, StatusSucceeded, filePath, "")
 }
 
-func (s *Server) selectDownloadTarget(ctx context.Context, rawURL string) (downloadTarget, error) {
+func (s *Server) proxyForTask(useProxy bool) (string, error) {
+	if !useProxy {
+		return "", nil
+	}
+	if s.proxyURL == "" {
+		return "", errors.New("proxy requested but PROXY_URL is not configured")
+	}
+	return s.proxyURL, nil
+}
+
+func (s *Server) selectDownloadTarget(ctx context.Context, rawURL, proxyURL string) (downloadTarget, error) {
 	target := downloadTarget{URL: rawURL}
 	args := []string{"-J", "--no-warnings", "--ignore-errors", rawURL}
+	if proxyURL != "" {
+		args = []string{"-J", "--no-warnings", "--ignore-errors", "--proxy", proxyURL, rawURL}
+	}
 	cmd := exec.CommandContext(ctx, s.ytDLP, args...)
 	out, err := cmd.Output()
 	if err != nil {

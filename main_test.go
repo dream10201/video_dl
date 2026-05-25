@@ -35,3 +35,23 @@ func TestEntryScoreFallsBackToBitrateAndDuration(t *testing.T) {
 		t.Fatalf("entryScore() = %v, want positive fallback score", got)
 	}
 }
+
+func TestProxyForTaskRequiresConfiguredProxy(t *testing.T) {
+	srv := &Server{}
+
+	if got, err := srv.proxyForTask(false); err != nil || got != "" {
+		t.Fatalf("proxyForTask(false) = %q, %v; want empty proxy and nil error", got, err)
+	}
+	if _, err := srv.proxyForTask(true); err == nil {
+		t.Fatal("proxyForTask(true) without proxy URL should fail")
+	}
+
+	srv.proxyURL = "socks5://127.0.0.1:1080"
+	got, err := srv.proxyForTask(true)
+	if err != nil {
+		t.Fatalf("proxyForTask(true) returned error: %v", err)
+	}
+	if got != srv.proxyURL {
+		t.Fatalf("proxyForTask(true) = %q, want %q", got, srv.proxyURL)
+	}
+}

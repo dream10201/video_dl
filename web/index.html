@@ -56,7 +56,7 @@
     .subtle { color: var(--muted); }
     form {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-columns: minmax(0, 1fr) auto auto;
       gap: 10px;
       background: var(--panel);
       border: 1px solid var(--line);
@@ -78,6 +78,22 @@
       outline: none;
     }
     input:focus { border-color: var(--accent); }
+    .check {
+      min-height: 42px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text);
+      white-space: nowrap;
+      padding: 0 4px;
+    }
+    .check input {
+      width: 18px;
+      height: 18px;
+      min-width: 18px;
+      padding: 0;
+      accent-color: var(--accent);
+    }
     button {
       border: 0;
       background: var(--accent);
@@ -215,6 +231,7 @@
 
     <form id="create-form">
       <input id="url" name="url" type="url" required placeholder="https://www.youtube.com/watch?v=..." autocomplete="off">
+      <label class="check"><input id="proxy" name="proxy" type="checkbox">使用代理</label>
       <button type="submit">新建下载</button>
     </form>
 
@@ -230,6 +247,7 @@
     const summary = document.querySelector("#summary");
     const form = document.querySelector("#create-form");
     const input = document.querySelector("#url");
+    const proxy = document.querySelector("#proxy");
     const refresh = document.querySelector("#refresh");
 
     const labels = {
@@ -250,7 +268,7 @@
         const res = await fetch("/ui/tasks", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url })
+          body: JSON.stringify({ url, proxy: proxy.checked })
         });
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
@@ -297,6 +315,7 @@
               <div class="url">${escapeHTML(task.url)}</div>
               <div class="meta">
                 <span>${formatTime(task.created_at)}</span>
+                ${task.use_proxy ? `<span>代理</span>` : ""}
                 ${task.error ? `<span class="failed">${escapeHTML(task.error)}</span>` : ""}
               </div>
             </div>

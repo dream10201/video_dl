@@ -33,10 +33,19 @@ docker compose up --build
 curl -X POST http://localhost:8080/api/downloads \
   -H 'Authorization: Bearer your-secret-token' \
   -H 'Content-Type: application/json' \
-  -d '{"url":"https://example.com/video"}'
+  -d '{"url":"https://example.com/video","proxy":false}'
 ```
 
 兼容 `X-API-Token: your-secret-token` 请求头。
+
+如果需要让某个任务走代理，启动服务时配置 `PROXY_URL`，创建任务时传 `proxy: true`：
+
+```bash
+curl -X POST http://localhost:8080/api/downloads \
+  -H 'Authorization: Bearer your-secret-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://example.com/video","proxy":true}'
+```
 
 ## 配置
 
@@ -44,6 +53,7 @@ curl -X POST http://localhost:8080/api/downloads \
 | --- | --- | --- |
 | `PORT` | `8080` | HTTP 服务端口 |
 | `API_TOKEN` | 无 | 公开 API token，必填 |
+| `PROXY_URL` | 无 | yt-dlp 代理地址，例如 `http://127.0.0.1:7890` 或 `socks5://127.0.0.1:1080` |
 | `DOWNLOAD_DIR` | `downloads` | 下载目录 |
 | `WORKERS` | `1` 或 `2` | 并发下载 worker 数 |
 | `YT_DLP_BIN` | `yt-dlp` | yt-dlp 可执行文件 |
