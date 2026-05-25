@@ -139,6 +139,13 @@ func TestMediaContentType(t *testing.T) {
 	}
 }
 
+func TestTitleFromFilePath(t *testing.T) {
+	got := titleFromFilePath("/downloads/My Video [abc123].mp4")
+	if got != "My Video [abc123]" {
+		t.Fatalf("titleFromFilePath() = %q", got)
+	}
+}
+
 func TestParseRawHeadersFromBrowserCopy(t *testing.T) {
 	raw := "GET / HTTP/2\n" +
 		"Host: www.bilibili.com\n" +

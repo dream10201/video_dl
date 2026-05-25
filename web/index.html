@@ -157,9 +157,15 @@
       margin: 4px 0 0;
       accent-color: var(--accent);
     }
-    .url {
+    .title {
       overflow-wrap: anywhere;
       font-weight: 650;
+    }
+    .url {
+      overflow-wrap: anywhere;
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 2px;
     }
     .meta {
       display: flex;
@@ -401,11 +407,14 @@
         const progress = Math.max(0, Math.min(100, task.progress || 0));
         const downloadable = task.file_path && task.status === "succeeded";
         const fileName = task.file_path ? task.file_path.split(/[\\/]/).pop() : "";
+        const downloadPath = downloadable ? `/downloads/${encodeURIComponent(fileName)}` : "";
+        const displayTitle = task.title || task.url;
         el.innerHTML = `
           <div class="task-top">
             <input class="select-box" type="checkbox" data-select="${task.id}" ${selected.has(task.id) ? "checked" : ""} aria-label="选择任务">
             <div>
-              <div class="url">${escapeHTML(task.url)}</div>
+              <div class="title">${escapeHTML(displayTitle)}</div>
+              ${task.title ? `<div class="url">${escapeHTML(task.url)}</div>` : ""}
               <div class="meta">
                 <span>${formatTime(task.created_at)}</span>
                 ${task.use_proxy ? `<span>代理</span>` : ""}
@@ -422,8 +431,9 @@
             <div class="bar" style="width: ${progress}%"></div>
           </div>
           <div class="actions">
-            ${downloadable ? `<a href="/downloads/${encodeURIComponent(fileName)}" target="_blank" rel="noreferrer">预览</a>` : ""}
-            ${downloadable ? `<a href="/downloads/${encodeURIComponent(fileName)}?download=1" download>下载文件</a>` : ""}
+            ${downloadable ? `<a href="${downloadPath}" target="_blank" rel="noreferrer">预览</a>` : ""}
+            ${downloadable ? `<a href="${downloadPath}?download=1" download>下载文件</a>` : ""}
+            ${downloadable ? `<button class="secondary" data-copy="${downloadPath}" type="button">复制链接</button>` : ""}
             ${(task.status === "queued" || task.status === "running") ? `<button class="secondary danger" data-cancel="${task.id}" type="button">取消</button>` : ""}
             <button class="secondary danger" data-delete="${task.id}" type="button">删除</button>
           </div>
@@ -437,6 +447,14 @@
         });
         const cancel = el.querySelector("[data-cancel]");
         if (cancel) cancel.addEventListener("click", () => cancelTask(task.id));
+        const copy = el.querySelector("[data-copy]");
+        if (copy) {
+          copy.addEventListener("click", async () => {
+            await copyText(new URL(copy.dataset.copy, window.location.href).href);
+            copy.textContent = "已复制";
+            setTimeout(() => { copy.textContent = "复制链接"; }, 1400);
+          });
+        }
         const remove = el.querySelector("[data-delete]");
         remove.addEventListener("click", async () => {
           if (!confirm("删除这条任务记录？运行中的任务会被取消。")) return;
@@ -446,6 +464,22 @@
         });
         list.appendChild(el);
       }
+    }
+
+    async function copyText(value) {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(value);
+        return;
+      }
+      const area = document.createElement("textarea");
+      area.value = value;
+      area.style.position = "fixed";
+      area.style.left = "-9999px";
+      document.body.appendChild(area);
+      area.focus();
+      area.select();
+      document.execCommand("copy");
+      area.remove();
     }
 
     function progressLabel(status) {

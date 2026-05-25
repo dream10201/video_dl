@@ -44,6 +44,7 @@ const (
 type Task struct {
 	ID        string         `json:"id"`
 	URL       string         `json:"url"`
+	Title     string         `json:"title,omitempty"`
 	UseProxy  bool           `json:"use_proxy"`
 	Context   BrowserContext `json:"-"`
 	Status    TaskStatus     `json:"status"`
@@ -140,6 +141,7 @@ type Server struct {
 }
 
 type probeInfo struct {
+	Title   string       `json:"title"`
 	Entries []probeEntry `json:"entries"`
 }
 
@@ -425,6 +427,7 @@ func (s *Server) runTask(id string) {
 		s.finishTask(id, StatusFailed, "", err.Error())
 		return
 	}
+	s.setTaskTitle(id, target.Title)
 	s.addLog(id, target.describe())
 
 	tempDir, err := os.MkdirTemp(s.tempRoot, id+"-")
@@ -543,6 +546,7 @@ func (s *Server) selectDownloadTarget(ctx context.Context, rawURL, proxyURL stri
 		return target, fmt.Errorf("parse yt-dlp probe output: %w", err)
 	}
 	if len(info.Entries) == 0 {
+		target.Title = info.Title
 		target.EntriesCount = 1
 		return target, nil
 	}
@@ -761,6 +765,18 @@ func (s *Server) addLog(id, line string) {
 	s.mu.Unlock()
 }
 
+func (s *Server) setTaskTitle(id, title string) {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return
+	}
+	s.mu.Lock()
+	if task := s.tasks[id]; task != nil {
+		task.Title = title
+	}
+	s.mu.Unlock()
+}
+
 func (s *Server) finishTask(id string, status TaskStatus, filePath, errText string) {
 	s.mu.Lock()
 	if task := s.tasks[id]; task != nil {
@@ -772,6 +788,9 @@ func (s *Server) finishTask(id string, status TaskStatus, filePath, errText stri
 		}
 		if filePath != "" {
 			task.FilePath = filePath
+			if task.Title == "" {
+				task.Title = titleFromFilePath(filePath)
+			}
 		}
 		if errText != "" {
 			task.Error = errText
@@ -933,6 +952,16 @@ func mediaContentType(name string) string {
 func contentDisposition(disposition, name string) string {
 	escaped := strings.ReplaceAll(name, `"`, `'`)
 	return fmt.Sprintf(`%s; filename="%s"; filename*=UTF-8''%s`, disposition, escaped, url.PathEscape(name))
+}
+
+func titleFromFilePath(path string) string {
+	name := filepath.Base(path)
+	ext := filepath.Ext(name)
+	title := strings.TrimSpace(strings.TrimSuffix(name, ext))
+	if title == "" {
+		return name
+	}
+	return title
 }
 
 func blockedForwardHeader(name string) bool {
