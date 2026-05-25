@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -212,7 +213,7 @@ func main() {
 	mux.HandleFunc("/api/downloads", srv.withToken(srv.handleCreateDownload))
 	mux.HandleFunc("/ui/tasks", srv.handleUITasks)
 	mux.HandleFunc("/ui/tasks/", srv.handleUITask)
-	mux.Handle("/downloads/", http.StripPrefix("/downloads/", http.FileServer(http.Dir(downloadDir))))
+	mux.HandleFunc("/downloads/", srv.handleDownloadFile)
 
 	log.Printf("video_dl listening on :%s, workers=%d, download_dir=%s, temp_dir=%s", port, workers, downloadDir, tempRoot)
 	if err := http.ListenAndServe(":"+port, logging(mux)); err != nil {
@@ -232,6 +233,34 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(b)
+}
+
+func (s *Server) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimPrefix(r.URL.Path, "/downloads/")
+	if name == "" || strings.Contains(name, "/") || strings.Contains(name, `\`) {
+		http.NotFound(w, r)
+		return
+	}
+	path := filepath.Join(s.downloadDir, name)
+	file, err := os.Open(path)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil || info.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", mediaContentType(name))
+	disposition := "inline"
+	if r.URL.Query().Get("download") == "1" {
+		disposition = "attachment"
+	}
+	w.Header().Set("Content-Disposition", contentDisposition(disposition, name))
+	http.ServeContent(w, r, name, info.ModTime(), file)
 }
 
 func (s *Server) handleCreateDownload(w http.ResponseWriter, r *http.Request) {
@@ -848,6 +877,35 @@ func cleanHeaderValue(value string) string {
 	value = strings.ReplaceAll(value, "\r", "")
 	value = strings.ReplaceAll(value, "\n", "")
 	return value
+}
+
+func mediaContentType(name string) string {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".mp4", ".m4v":
+		return "video/mp4"
+	case ".webm":
+		return "video/webm"
+	case ".mkv":
+		return "video/x-matroska"
+	case ".mov":
+		return "video/quicktime"
+	case ".mp3":
+		return "audio/mpeg"
+	case ".m4a":
+		return "audio/mp4"
+	case ".opus":
+		return "audio/ogg"
+	default:
+		if value := mime.TypeByExtension(filepath.Ext(name)); value != "" {
+			return value
+		}
+		return "application/octet-stream"
+	}
+}
+
+func contentDisposition(disposition, name string) string {
+	escaped := strings.ReplaceAll(name, `"`, `'`)
+	return fmt.Sprintf(`%s; filename="%s"; filename*=UTF-8''%s`, disposition, escaped, url.PathEscape(name))
 }
 
 func blockedForwardHeader(name string) bool {

@@ -207,6 +207,22 @@
       text-decoration: none;
       font-weight: 650;
     }
+    .actions a,
+    .actions button {
+      height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+      padding: 0 12px;
+      font-size: 13px;
+      line-height: 1;
+    }
+    .actions a {
+      border: 1px solid var(--line);
+      color: var(--text);
+      background: transparent;
+    }
     pre {
       margin: 0;
       max-height: 150px;
@@ -392,7 +408,8 @@
             <div class="bar" style="width: ${progress}%"></div>
           </div>
           <div class="actions">
-            ${downloadable ? `<a href="/downloads/${encodeURIComponent(fileName)}" target="_blank" rel="noreferrer">打开文件</a>` : ""}
+            ${downloadable ? `<a href="/downloads/${encodeURIComponent(fileName)}" target="_blank" rel="noreferrer">预览</a>` : ""}
+            ${downloadable ? `<a href="/downloads/${encodeURIComponent(fileName)}?download=1" download>下载文件</a>` : ""}
             ${(task.status === "queued" || task.status === "running") ? `<button class="secondary danger" data-cancel="${task.id}" type="button">取消</button>` : ""}
             <button class="secondary danger" data-delete="${task.id}" type="button">删除</button>
           </div>

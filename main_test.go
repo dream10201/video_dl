@@ -125,3 +125,16 @@ func TestBrowserContextSanitizedYTDLPArgs(t *testing.T) {
 		}
 	}
 }
+
+func TestMediaContentType(t *testing.T) {
+	cases := map[string]string{
+		"video.mp4": "video/mp4",
+		"clip.webm": "video/webm",
+		"audio.m4a": "audio/mp4",
+	}
+	for name, want := range cases {
+		if got := mediaContentType(name); got != want {
+			t.Fatalf("mediaContentType(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
