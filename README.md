@@ -73,6 +73,7 @@ curl -X POST http://localhost:8080/api/downloads \
 | `TEMP_DIR` | `/dev/shm/video_dl` | 临时下载目录，默认使用内存文件系统 |
 | `WORKERS` | `1` 或 `2` | 并发下载 worker 数 |
 | `YT_DLP_BIN` | `yt-dlp` | yt-dlp 可执行文件 |
+| `YT_DLP_FORMAT` | 浏览器兼容 H.264/AAC 优先 | yt-dlp 格式选择器；如需绝对最高质量可设为 `bestvideo*+bestaudio/best` |
 | `FFMPEG_BIN` | `ffmpeg` | ffmpeg 可执行文件 |
 
 ## GitHub Packages
