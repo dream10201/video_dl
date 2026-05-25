@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestEntryScorePrefersLargestVideoAudioEstimate(t *testing.T) {
 	smallPreview := probeEntry{
@@ -53,5 +57,25 @@ func TestProxyForTaskRequiresConfiguredProxy(t *testing.T) {
 	}
 	if got != srv.proxyURL {
 		t.Fatalf("proxyForTask(true) = %q, want %q", got, srv.proxyURL)
+	}
+}
+
+func TestFindFinalMediaPrefersVideoOverAudioSidecar(t *testing.T) {
+	dir := t.TempDir()
+	audio := filepath.Join(dir, "sample.m4a")
+	video := filepath.Join(dir, "sample.mp4")
+	if err := os.WriteFile(audio, []byte("larger-audio-sidecar"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(video, []byte("video"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := findFinalMedia(dir)
+	if err != nil {
+		t.Fatalf("findFinalMedia returned error: %v", err)
+	}
+	if got != video {
+		t.Fatalf("findFinalMedia() = %q, want %q", got, video)
 	}
 }

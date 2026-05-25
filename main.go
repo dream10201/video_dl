@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -59,6 +60,7 @@ type Server struct {
 	queue       chan string
 	cancelFuncs map[string]context.CancelFunc
 	downloadDir string
+	tempRoot    string
 	ytDLP       string
 	ffmpeg      string
 	apiToken    string
@@ -103,6 +105,7 @@ var progressRE = regexp.MustCompile(`\[download\]\s+([0-9]+(?:\.[0-9]+)?)%`)
 func main() {
 	port := env("PORT", "8080")
 	downloadDir := env("DOWNLOAD_DIR", "downloads")
+	tempRoot := env("TEMP_DIR", defaultTempRoot())
 	ytDLP := env("YT_DLP_BIN", "yt-dlp")
 	ffmpeg := env("FFMPEG_BIN", "ffmpeg")
 	apiToken := env("API_TOKEN", "")
@@ -115,12 +118,16 @@ func main() {
 	if err := os.MkdirAll(downloadDir, 0o755); err != nil {
 		log.Fatalf("create download dir: %v", err)
 	}
+	if err := os.MkdirAll(tempRoot, 0o755); err != nil {
+		log.Fatalf("create temp dir: %v", err)
+	}
 
 	srv := &Server{
 		tasks:       make(map[string]*Task),
 		queue:       make(chan string, 100),
 		cancelFuncs: make(map[string]context.CancelFunc),
 		downloadDir: downloadDir,
+		tempRoot:    tempRoot,
 		ytDLP:       ytDLP,
 		ffmpeg:      ffmpeg,
 		apiToken:    apiToken,
@@ -137,7 +144,7 @@ func main() {
 	mux.HandleFunc("/ui/tasks/", srv.handleUITask)
 	mux.Handle("/downloads/", http.StripPrefix("/downloads/", http.FileServer(http.Dir(downloadDir))))
 
-	log.Printf("video_dl listening on :%s, workers=%d, download_dir=%s", port, workers, downloadDir)
+	log.Printf("video_dl listening on :%s, workers=%d, download_dir=%s, temp_dir=%s", port, workers, downloadDir, tempRoot)
 	if err := http.ListenAndServe(":"+port, logging(mux)); err != nil {
 		log.Fatal(err)
 	}
@@ -309,17 +316,28 @@ func (s *Server) runTask(id string) {
 	}
 	s.addLog(id, target.describe())
 
-	outputTemplate := filepath.Join(s.downloadDir, "%(title).200B [%(id)s].%(ext)s")
+	tempDir, err := os.MkdirTemp(s.tempRoot, id+"-")
+	if err != nil {
+		s.finishTask(id, StatusFailed, "", fmt.Sprintf("create temp dir: %v", err))
+		return
+	}
+	defer func() {
+		if err := os.RemoveAll(tempDir); err != nil {
+			log.Printf("remove temp dir %s: %v", tempDir, err)
+		}
+	}()
+
+	outputTemplate := filepath.Join(tempDir, "%(title).200B [%(id)s].%(ext)s")
 	args := []string{
 		"--newline",
 		"--no-warnings",
 		"--continue",
 		"--ignore-errors",
+		"--no-keep-video",
 		"--format", "bestvideo*+bestaudio/best",
 		"--merge-output-format", "mp4",
 		"--ffmpeg-location", s.ffmpeg,
 		"--output", outputTemplate,
-		"--print", "after_move:filepath",
 	}
 	if proxyURL != "" {
 		args = append(args, "--proxy", proxyURL)
@@ -370,10 +388,15 @@ func (s *Server) runTask(id string) {
 		return
 	}
 	if err != nil {
-		s.finishTask(id, StatusFailed, filePath, err.Error())
+		s.finishTask(id, StatusFailed, "", err.Error())
 		return
 	}
-	s.finishTask(id, StatusSucceeded, filePath, "")
+	finalPath, err := s.moveFinalDownload(tempDir)
+	if err != nil {
+		s.finishTask(id, StatusFailed, "", err.Error())
+		return
+	}
+	s.finishTask(id, StatusSucceeded, finalPath, "")
 }
 
 func (s *Server) proxyForTask(useProxy bool) (string, error) {
@@ -512,11 +535,107 @@ func (s *Server) scanOutput(id string, r io.Reader) {
 					task.Progress = p
 				}
 			}
-			if maybeFilePath(line) {
-				task.FilePath = line
-			}
 		}
 		s.mu.Unlock()
+	}
+}
+
+func (s *Server) moveFinalDownload(tempDir string) (string, error) {
+	source, err := findFinalMedia(tempDir)
+	if err != nil {
+		return "", err
+	}
+	dest := uniquePath(filepath.Join(s.downloadDir, filepath.Base(source)))
+	if err := moveFile(source, dest); err != nil {
+		return "", fmt.Errorf("move final file: %w", err)
+	}
+	return dest, nil
+}
+
+func moveFile(source, dest string) error {
+	if err := os.Rename(source, dest); err == nil {
+		return nil
+	} else if !errors.Is(err, syscall.EXDEV) {
+		return err
+	}
+
+	in, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.OpenFile(dest, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(out, in)
+	closeErr := out.Close()
+	if copyErr != nil {
+		_ = os.Remove(dest)
+		return copyErr
+	}
+	if closeErr != nil {
+		_ = os.Remove(dest)
+		return closeErr
+	}
+	return os.Remove(source)
+}
+
+func findFinalMedia(root string) (string, error) {
+	var bestVideo fileCandidate
+	var bestAny fileCandidate
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if isTempDownloadFile(path) {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		candidate := fileCandidate{path: path, size: info.Size()}
+		if isMediaFile(path) && candidate.size > bestAny.size {
+			bestAny = candidate
+		}
+		if isVideoFile(path) && candidate.size > bestVideo.size {
+			bestVideo = candidate
+		}
+		return nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("scan downloaded files: %w", err)
+	}
+	if bestVideo.path != "" {
+		return bestVideo.path, nil
+	}
+	if bestAny.path != "" {
+		return bestAny.path, nil
+	}
+	return "", errors.New("no downloaded media file found")
+}
+
+type fileCandidate struct {
+	path string
+	size int64
+}
+
+func uniquePath(path string) string {
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return path
+	}
+	ext := filepath.Ext(path)
+	base := strings.TrimSuffix(path, ext)
+	for i := 1; ; i++ {
+		candidate := fmt.Sprintf("%s (%d)%s", base, i, ext)
+		if _, err := os.Stat(candidate); errors.Is(err, os.ErrNotExist) {
+			return candidate
+		}
 	}
 }
 
@@ -642,13 +761,28 @@ func appendBounded(logs []string, line string, maxLines int) []string {
 	return logs
 }
 
-func maybeFilePath(line string) bool {
-	if strings.Contains(line, "[") || strings.Contains(line, "]") {
+func isTempDownloadFile(path string) bool {
+	name := strings.ToLower(filepath.Base(path))
+	if strings.HasSuffix(name, ".part") || strings.HasSuffix(name, ".ytdl") || strings.HasSuffix(name, ".temp") {
+		return true
+	}
+	return strings.Contains(name, ".part.")
+}
+
+func isMediaFile(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".mp4", ".mkv", ".webm", ".mov", ".m4v", ".m4a", ".mp3", ".opus":
+		return true
+	default:
 		return false
 	}
-	ext := strings.ToLower(filepath.Ext(line))
+}
+
+func isVideoFile(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
 	switch ext {
-	case ".mp4", ".mkv", ".webm", ".mov", ".m4a", ".mp3", ".opus":
+	case ".mp4", ".mkv", ".webm", ".mov", ".m4v":
 		return true
 	default:
 		return false
@@ -668,6 +802,13 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func defaultTempRoot() string {
+	if info, err := os.Stat("/dev/shm"); err == nil && info.IsDir() {
+		return "/dev/shm/video_dl"
+	}
+	return filepath.Join(os.TempDir(), "video_dl")
 }
 
 func envInt(key string, fallback int) int {

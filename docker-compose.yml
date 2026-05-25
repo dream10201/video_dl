@@ -2,6 +2,7 @@ services:
   video-dl:
     build: .
     image: ghcr.io/dream10201/video_dl:local
+    shm_size: "2gb"
     ports:
       - "8080:8080"
     volumes:

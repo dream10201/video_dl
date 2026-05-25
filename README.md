@@ -24,6 +24,7 @@ docker compose up --build
 ```
 
 下载文件默认保存到 `./downloads`。任务状态只保存在内存中，服务重启后任务列表会清空。
+下载过程中产生的音频、视频分片等临时文件默认放在 `/dev/shm/video_dl`，完成后只把最终视频移到下载目录。
 
 ## API
 
@@ -55,6 +56,7 @@ curl -X POST http://localhost:8080/api/downloads \
 | `API_TOKEN` | 无 | 公开 API token，必填 |
 | `PROXY_URL` | 无 | yt-dlp 代理地址，例如 `http://127.0.0.1:7890` 或 `socks5://127.0.0.1:1080` |
 | `DOWNLOAD_DIR` | `downloads` | 下载目录 |
+| `TEMP_DIR` | `/dev/shm/video_dl` | 临时下载目录，默认使用内存文件系统 |
 | `WORKERS` | `1` 或 `2` | 并发下载 worker 数 |
 | `YT_DLP_BIN` | `yt-dlp` | yt-dlp 可执行文件 |
 | `FFMPEG_BIN` | `ffmpeg` | ffmpeg 可执行文件 |
