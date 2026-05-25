@@ -151,8 +151,12 @@ func TestParseRawHeadersFromBrowserCopy(t *testing.T) {
 		"Host: www.bilibili.com\n" +
 		"User-Agent: Mozilla/5.0\n" +
 		"Accept-Language: zh-CN\n" +
+		"Accept-Encoding: gzip, deflate, br, zstd\n" +
 		"Connection: keep-alive\n" +
-		"Cookie: sid=secret; bili_jct=token\n"
+		"Cookie: sid=secret; bili_jct=token\n" +
+		"Sec-Fetch-Dest: document\n" +
+		"Priority: u=0, i\n" +
+		"TE: trailers\n"
 
 	headers := parseRawHeaders(raw)
 	if headers["User-Agent"] != "Mozilla/5.0" {
@@ -166,5 +170,21 @@ func TestParseRawHeadersFromBrowserCopy(t *testing.T) {
 	}
 	if _, ok := headers["Connection"]; ok {
 		t.Fatal("Connection should be filtered")
+	}
+	if _, ok := headers["Accept-Encoding"]; ok {
+		t.Fatal("Accept-Encoding should be filtered")
+	}
+	if _, ok := headers["Sec-Fetch-Dest"]; ok {
+		t.Fatal("Sec-Fetch-Dest should be filtered")
+	}
+	if _, ok := headers["Te"]; ok {
+		t.Fatal("TE should be filtered")
+	}
+}
+
+func TestDownloadRequestDefaultsRefererToURL(t *testing.T) {
+	ctx := DownloadRequest{URL: "https://example.com/video"}.BrowserContext()
+	if ctx.Headers["Referer"] != "https://example.com/video" {
+		t.Fatalf("Referer = %q", ctx.Headers["Referer"])
 	}
 }

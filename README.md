@@ -27,7 +27,7 @@ docker compose up --build
 下载过程中产生的音频、视频分片等临时文件默认放在 `/dev/shm/video_dl`，完成后只把最终视频移到下载目录。
 Web 页面支持删除单条任务记录、删除选中记录和清空全部任务记录；删除运行中任务会先取消下载。文件名会按跨平台兼容规则过滤非法字符。
 已完成任务提供“预览”和“下载文件”两个操作；预览会返回明确的媒体 MIME 类型，下载按钮会强制浏览器保存文件。
-Web 新建任务表单支持粘贴浏览器 DevTools 的 `Copy request headers` 原文，后端会解析 Cookie、User-Agent、Referer 等头并传给 yt-dlp。
+Web 新建任务表单支持粘贴浏览器 DevTools 的 `Copy request headers` 原文，后端会解析 Cookie、User-Agent、Referer 等头并传给 yt-dlp，并过滤 `Accept-Encoding`、`Sec-Fetch-*`、`Connection` 等不适合转发的浏览器传输层头。
 
 ## 油猴脚本
 

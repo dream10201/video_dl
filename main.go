@@ -75,10 +75,14 @@ type BrowserContext struct {
 }
 
 func (r DownloadRequest) BrowserContext() BrowserContext {
+	referer := r.Referer
+	if strings.TrimSpace(referer) == "" {
+		referer = r.URL
+	}
 	return BrowserContext{
 		Cookie:    r.Cookie,
 		UserAgent: r.UserAgent,
-		Referer:   r.Referer,
+		Referer:   referer,
 		Headers:   mergeHeaders(parseRawHeaders(r.RawHeaders), r.Headers),
 	}.Sanitized()
 }
@@ -533,7 +537,7 @@ func (s *Server) selectDownloadTarget(ctx context.Context, rawURL, proxyURL stri
 	}
 	args = append(args[:len(args)-1], append(browserContext.YTDLPArgs(), rawURL)...)
 	cmd := exec.CommandContext(ctx, s.ytDLP, args...)
-	out, err := cmd.Output()
+	out, err := commandOutput(cmd)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return target, ctx.Err()
@@ -570,6 +574,20 @@ func (s *Server) selectDownloadTarget(ctx context.Context, rawURL, proxyURL stri
 	target.Title = best.Title
 	target.Score = bestScore
 	return target, nil
+}
+
+func commandOutput(cmd *exec.Cmd) ([]byte, error) {
+	out, err := cmd.Output()
+	if err == nil {
+		return out, nil
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		stderr := strings.TrimSpace(string(exitErr.Stderr))
+		if stderr != "" {
+			return out, fmt.Errorf("%w: %s", err, stderr)
+		}
+	}
+	return out, err
 }
 
 func (t downloadTarget) describe() string {
@@ -965,8 +983,22 @@ func titleFromFilePath(path string) string {
 }
 
 func blockedForwardHeader(name string) bool {
-	switch strings.ToLower(name) {
-	case "authorization", "host", "content-length", "connection", "transfer-encoding", "proxy-authorization":
+	lower := strings.ToLower(name)
+	if strings.HasPrefix(lower, "sec-fetch-") {
+		return true
+	}
+	switch lower {
+	case "accept-encoding",
+		"authorization",
+		"connection",
+		"content-length",
+		"dnt",
+		"host",
+		"priority",
+		"proxy-authorization",
+		"te",
+		"transfer-encoding",
+		"upgrade-insecure-requests":
 		return true
 	default:
 		return false
