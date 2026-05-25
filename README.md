@@ -1,0 +1,66 @@
+# video_dl
+
+一个基于 `yt-dlp` 的视频下载服务：提供 HTTP API 和简单 Web 页面，提交网页或视频链接后自动按最高质量下载并用 `ffmpeg` 合并。
+
+## 本地运行
+
+需要本机已安装：
+
+- Go 1.24+
+- yt-dlp
+- ffmpeg
+
+```bash
+go run .
+```
+
+打开 `http://localhost:8080`。
+
+## Docker 运行
+
+```bash
+docker compose up --build
+```
+
+下载文件默认保存到 `./downloads`。任务状态只保存在内存中，服务重启后任务列表会清空。
+
+## API
+
+创建任务：
+
+```bash
+curl -X POST http://localhost:8080/api/tasks \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://example.com/video"}'
+```
+
+查看任务：
+
+```bash
+curl http://localhost:8080/api/tasks
+curl http://localhost:8080/api/tasks/<id>
+```
+
+取消任务：
+
+```bash
+curl -X POST http://localhost:8080/api/tasks/<id>/cancel
+```
+
+## 配置
+
+| 环境变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `PORT` | `8080` | HTTP 服务端口 |
+| `DOWNLOAD_DIR` | `downloads` | 下载目录 |
+| `WORKERS` | `1` 或 `2` | 并发下载 worker 数 |
+| `YT_DLP_BIN` | `yt-dlp` | yt-dlp 可执行文件 |
+| `FFMPEG_BIN` | `ffmpeg` | ffmpeg 可执行文件 |
+
+## GitHub Packages
+
+`.github/workflows/docker.yml` 会在推送到 `main`/`master` 或推送 `v*.*.*` tag 时构建并推送镜像：
+
+```text
+ghcr.io/dream10201/video_dl
+```

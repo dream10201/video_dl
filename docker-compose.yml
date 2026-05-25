@@ -1,0 +1,10 @@
+services:
+  video-dl:
+    build: .
+    image: ghcr.io/dream10201/video_dl:local
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./downloads:/app/downloads
+    environment:
+      WORKERS: "1"

@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Video DL</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f7f7f4;
+      --panel: #ffffff;
+      --text: #1f2428;
+      --muted: #66707a;
+      --line: #d9ded8;
+      --accent: #0f766e;
+      --accent-text: #ffffff;
+      --danger: #b42318;
+      --ok: #287d3c;
+      --warn: #9a6700;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #101415;
+        --panel: #171c1f;
+        --text: #e8ecef;
+        --muted: #9aa4ae;
+        --line: #2b3337;
+        --accent: #2dd4bf;
+        --accent-text: #062220;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 28px 16px 48px;
+    }
+    header {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 28px;
+      letter-spacing: 0;
+    }
+    .subtle { color: var(--muted); }
+    form {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 18px;
+    }
+    input, button {
+      height: 42px;
+      border-radius: 6px;
+      font: inherit;
+    }
+    input {
+      min-width: 0;
+      border: 1px solid var(--line);
+      background: transparent;
+      color: var(--text);
+      padding: 0 12px;
+      outline: none;
+    }
+    input:focus { border-color: var(--accent); }
+    button {
+      border: 0;
+      background: var(--accent);
+      color: var(--accent-text);
+      padding: 0 16px;
+      cursor: pointer;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+    button.secondary {
+      border: 1px solid var(--line);
+      background: transparent;
+      color: var(--text);
+    }
+    button.danger { color: var(--danger); }
+    button:disabled { opacity: .55; cursor: default; }
+    .toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin: 18px 0 10px;
+    }
+    .list {
+      display: grid;
+      gap: 10px;
+    }
+    .task {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      display: grid;
+      gap: 12px;
+    }
+    .task-top {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: start;
+    }
+    .url {
+      overflow-wrap: anywhere;
+      font-weight: 650;
+    }
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 12px;
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 2px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      height: 26px;
+      padding: 0 9px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .queued { color: var(--warn); }
+    .running { color: var(--accent); }
+    .succeeded { color: var(--ok); }
+    .failed, .canceled { color: var(--danger); }
+    .progress {
+      height: 8px;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--line), transparent 35%);
+      overflow: hidden;
+    }
+    .bar {
+      height: 100%;
+      width: 0;
+      background: var(--accent);
+      transition: width .2s ease;
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: end;
+    }
+    a {
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 650;
+    }
+    pre {
+      margin: 0;
+      max-height: 150px;
+      overflow: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      border-top: 1px solid var(--line);
+      padding-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .empty {
+      border: 1px dashed var(--line);
+      border-radius: 8px;
+      padding: 32px 16px;
+      text-align: center;
+      color: var(--muted);
+    }
+    @media (max-width: 640px) {
+      header, .toolbar, .task-top { grid-template-columns: 1fr; display: grid; align-items: stretch; }
+      form { grid-template-columns: 1fr; }
+      .actions { justify-content: start; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Video DL</h1>
+        <div class="subtle">yt-dlp 下载任务</div>
+      </div>
+      <button class="secondary" id="refresh" type="button">刷新</button>
+    </header>
+
+    <form id="create-form">
+      <input id="url" name="url" type="url" required placeholder="https://www.youtube.com/watch?v=..." autocomplete="off">
+      <button type="submit">新建下载</button>
+    </form>
+
+    <div class="toolbar">
+      <strong>任务列表</strong>
+      <span id="summary" class="subtle"></span>
+    </div>
+    <section id="tasks" class="list"></section>
+  </main>
+
+  <script>
+    const list = document.querySelector("#tasks");
+    const summary = document.querySelector("#summary");
+    const form = document.querySelector("#create-form");
+    const input = document.querySelector("#url");
+    const refresh = document.querySelector("#refresh");
+
+    const labels = {
+      queued: "排队中",
+      running: "下载中",
+      succeeded: "已完成",
+      failed: "失败",
+      canceled: "已取消"
+    };
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const url = input.value.trim();
+      if (!url) return;
+      const button = form.querySelector("button");
+      button.disabled = true;
+      try {
+        const res = await fetch("/api/tasks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url })
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || "创建任务失败");
+        }
+        input.value = "";
+        await loadTasks();
+      } catch (error) {
+        alert(error.message);
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    refresh.addEventListener("click", loadTasks);
+
+    async function cancelTask(id) {
+      await fetch(`/api/tasks/${id}/cancel`, { method: "POST" });
+      await loadTasks();
+    }
+
+    async function loadTasks() {
+      const res = await fetch("/api/tasks");
+      const body = await res.json();
+      render(body.tasks || []);
+    }
+
+    function render(tasks) {
+      summary.textContent = tasks.length ? `${tasks.length} 个任务` : "";
+      if (!tasks.length) {
+        list.innerHTML = `<div class="empty">暂无任务</div>`;
+        return;
+      }
+      list.innerHTML = "";
+      for (const task of tasks) {
+        const el = document.createElement("article");
+        el.className = "task";
+        const progress = Math.max(0, Math.min(100, task.progress || 0));
+        const downloadable = task.file_path && task.status === "succeeded";
+        const fileName = task.file_path ? task.file_path.split(/[\\/]/).pop() : "";
+        el.innerHTML = `
+          <div class="task-top">
+            <div>
+              <div class="url">${escapeHTML(task.url)}</div>
+              <div class="meta">
+                <span>${formatTime(task.created_at)}</span>
+                <span>${progress.toFixed(1)}%</span>
+                ${task.error ? `<span class="failed">${escapeHTML(task.error)}</span>` : ""}
+              </div>
+            </div>
+            <span class="badge ${task.status}">${labels[task.status] || task.status}</span>
+          </div>
+          <div class="progress"><div class="bar" style="width: ${progress}%"></div></div>
+          <div class="actions">
+            ${downloadable ? `<a href="/downloads/${encodeURIComponent(fileName)}" target="_blank" rel="noreferrer">打开文件</a>` : ""}
+            ${(task.status === "queued" || task.status === "running") ? `<button class="secondary danger" data-cancel="${task.id}" type="button">取消</button>` : ""}
+          </div>
+          <pre>${escapeHTML((task.logs || []).slice(-12).join("\n"))}</pre>
+        `;
+        const cancel = el.querySelector("[data-cancel]");
+        if (cancel) cancel.addEventListener("click", () => cancelTask(task.id));
+        list.appendChild(el);
+      }
+    }
+
+    function formatTime(value) {
+      if (!value) return "";
+      return new Intl.DateTimeFormat("zh-CN", {
+        month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"
+      }).format(new Date(value));
+    }
+
+    function escapeHTML(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[ch]));
+    }
+
+    loadTasks();
+    setInterval(loadTasks, 2500);
+  </script>
+</body>
+</html>
