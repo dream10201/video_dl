@@ -152,6 +152,15 @@
       background: color-mix(in srgb, var(--line), transparent 35%);
       overflow: hidden;
     }
+    .progress-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 650;
+    }
     .bar {
       height: 100%;
       width: 0;
@@ -288,13 +297,18 @@
               <div class="url">${escapeHTML(task.url)}</div>
               <div class="meta">
                 <span>${formatTime(task.created_at)}</span>
-                <span>${progress.toFixed(1)}%</span>
                 ${task.error ? `<span class="failed">${escapeHTML(task.error)}</span>` : ""}
               </div>
             </div>
             <span class="badge ${task.status}">${labels[task.status] || task.status}</span>
           </div>
-          <div class="progress"><div class="bar" style="width: ${progress}%"></div></div>
+          <div class="progress-head">
+            <span>${progressLabel(task.status)}</span>
+            <span>${progress.toFixed(1)}%</span>
+          </div>
+          <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress.toFixed(1)}">
+            <div class="bar" style="width: ${progress}%"></div>
+          </div>
           <div class="actions">
             ${downloadable ? `<a href="/downloads/${encodeURIComponent(fileName)}" target="_blank" rel="noreferrer">打开文件</a>` : ""}
             ${(task.status === "queued" || task.status === "running") ? `<button class="secondary danger" data-cancel="${task.id}" type="button">取消</button>` : ""}
@@ -305,6 +319,15 @@
         if (cancel) cancel.addEventListener("click", () => cancelTask(task.id));
         list.appendChild(el);
       }
+    }
+
+    function progressLabel(status) {
+      if (status === "queued") return "等待下载";
+      if (status === "running") return "下载进度";
+      if (status === "succeeded") return "下载完成";
+      if (status === "canceled") return "已取消";
+      if (status === "failed") return "下载失败";
+      return "下载进度";
     }
 
     function formatTime(value) {
