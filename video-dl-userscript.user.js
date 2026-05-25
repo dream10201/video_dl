@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Video DL 页面下载助手
 // @namespace    https://github.com/dream10201/video_dl
-// @version      2.0.0
-// @description  在网页视频/音频上显示下载按钮，将当前页面或媒体直链提交到 video_dl 服务。
+// @version      2.1.0
+// @description  在网页视频/音频上显示下载按钮，将当前页面或媒体直链连同浏览器上下文提交到 video_dl 服务。
 // @author       dream10201
 // @match        *://*/*
 // @connect      *
@@ -223,7 +223,14 @@
                 'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json'
             },
-            data: JSON.stringify({ url: targetURL, proxy: useProxy }),
+            data: JSON.stringify({
+                url: targetURL,
+                proxy: useProxy,
+                cookie: document.cookie || '',
+                user_agent: navigator.userAgent || '',
+                referer: location.href,
+                headers: collectBrowserHeaders()
+            }),
             responseType: 'json',
             onload(response) {
                 if (response.status >= 200 && response.status < 300) {
@@ -253,6 +260,21 @@
 
     function normalizeBackend(value) {
         return String(value || '').trim().replace(/\/+$/, '');
+    }
+
+    function collectBrowserHeaders() {
+        const headers = {
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Origin': location.origin,
+            'Referer': location.href,
+            'User-Agent': navigator.userAgent || ''
+        };
+        if (navigator.languages && navigator.languages.length) {
+            headers['Accept-Language'] = navigator.languages.join(',');
+        } else if (navigator.language) {
+            headers['Accept-Language'] = navigator.language;
+        }
+        return headers;
     }
 
     function updateAllPositions() {

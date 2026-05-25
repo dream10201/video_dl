@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,17 +41,86 @@ const (
 )
 
 type Task struct {
-	ID        string     `json:"id"`
-	URL       string     `json:"url"`
-	UseProxy  bool       `json:"use_proxy"`
-	Status    TaskStatus `json:"status"`
-	Progress  float64    `json:"progress"`
-	FilePath  string     `json:"file_path,omitempty"`
-	Error     string     `json:"error,omitempty"`
-	Logs      []string   `json:"logs"`
-	CreatedAt time.Time  `json:"created_at"`
-	StartedAt time.Time  `json:"started_at,omitempty"`
-	EndedAt   time.Time  `json:"ended_at,omitempty"`
+	ID        string         `json:"id"`
+	URL       string         `json:"url"`
+	UseProxy  bool           `json:"use_proxy"`
+	Context   BrowserContext `json:"-"`
+	Status    TaskStatus     `json:"status"`
+	Progress  float64        `json:"progress"`
+	FilePath  string         `json:"file_path,omitempty"`
+	Error     string         `json:"error,omitempty"`
+	Logs      []string       `json:"logs"`
+	CreatedAt time.Time      `json:"created_at"`
+	StartedAt time.Time      `json:"started_at,omitempty"`
+	EndedAt   time.Time      `json:"ended_at,omitempty"`
+}
+
+type DownloadRequest struct {
+	URL       string            `json:"url"`
+	UseProxy  bool              `json:"proxy"`
+	Cookie    string            `json:"cookie"`
+	UserAgent string            `json:"user_agent"`
+	Referer   string            `json:"referer"`
+	Headers   map[string]string `json:"headers"`
+}
+
+type BrowserContext struct {
+	Cookie    string
+	UserAgent string
+	Referer   string
+	Headers   map[string]string
+}
+
+func (r DownloadRequest) BrowserContext() BrowserContext {
+	return BrowserContext{
+		Cookie:    r.Cookie,
+		UserAgent: r.UserAgent,
+		Referer:   r.Referer,
+		Headers:   r.Headers,
+	}.Sanitized()
+}
+
+func (c BrowserContext) Sanitized() BrowserContext {
+	headers := make(map[string]string)
+	for name, value := range c.Headers {
+		name = cleanHeaderName(name)
+		value = cleanHeaderValue(value)
+		if name == "" || value == "" || blockedForwardHeader(name) {
+			continue
+		}
+		headers[name] = value
+	}
+	if value := cleanHeaderValue(c.Cookie); value != "" {
+		headers["Cookie"] = value
+	}
+	if value := cleanHeaderValue(c.UserAgent); value != "" {
+		headers["User-Agent"] = value
+	}
+	if value := cleanHeaderValue(c.Referer); value != "" {
+		headers["Referer"] = value
+	}
+	return BrowserContext{Headers: headers}
+}
+
+func (c BrowserContext) HasHeaders() bool {
+	return len(c.Headers) > 0
+}
+
+func (c BrowserContext) YTDLPArgs() []string {
+	if len(c.Headers) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(c.Headers))
+	for name := range c.Headers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	args := make([]string, 0, len(names)*2)
+	for _, name := range names {
+		args = append(args, "--add-header", name+":"+c.Headers[name])
+	}
+	return args
 }
 
 type Server struct {
@@ -171,10 +241,7 @@ func (s *Server) handleCreateDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req struct {
-		URL      string `json:"url"`
-		UseProxy bool   `json:"proxy"`
-	}
+	var req DownloadRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
@@ -184,7 +251,7 @@ func (s *Server) handleCreateDownload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	task := s.enqueue(req.URL, req.UseProxy)
+	task := s.enqueue(req.URL, req.UseProxy, req.BrowserContext())
 	writeJSON(w, http.StatusCreated, task)
 }
 
@@ -214,7 +281,7 @@ func (s *Server) handleUITasks(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		task := s.enqueue(req.URL, req.UseProxy)
+		task := s.enqueue(req.URL, req.UseProxy, BrowserContext{})
 		writeJSON(w, http.StatusCreated, task)
 	case http.MethodDelete:
 		deleted := s.deleteAllTasks()
@@ -269,11 +336,12 @@ func (s *Server) handleUITask(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
-func (s *Server) enqueue(rawURL string, useProxy bool) *Task {
+func (s *Server) enqueue(rawURL string, useProxy bool, browserContext BrowserContext) *Task {
 	task := &Task{
 		ID:        newID(),
 		URL:       rawURL,
 		UseProxy:  useProxy,
+		Context:   browserContext.Sanitized(),
 		Status:    StatusQueued,
 		CreatedAt: time.Now().UTC(),
 		Logs:      []string{"任务已创建，等待下载"},
@@ -306,6 +374,7 @@ func (s *Server) runTask(id string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancelFuncs[id] = cancel
 	useProxy := task.UseProxy
+	browserContext := task.Context
 	s.mu.Unlock()
 
 	proxyURL, err := s.proxyForTask(useProxy)
@@ -316,8 +385,11 @@ func (s *Server) runTask(id string) {
 	if proxyURL != "" {
 		s.addLog(id, "本任务启用代理")
 	}
+	if browserContext.HasHeaders() {
+		s.addLog(id, "本任务携带浏览器上下文")
+	}
 
-	target, err := s.selectDownloadTarget(ctx, task.URL, proxyURL)
+	target, err := s.selectDownloadTarget(ctx, task.URL, proxyURL, browserContext)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			s.finishTask(id, StatusCanceled, "", "任务已取消")
@@ -355,6 +427,7 @@ func (s *Server) runTask(id string) {
 	if proxyURL != "" {
 		args = append(args, "--proxy", proxyURL)
 	}
+	args = append(args, browserContext.YTDLPArgs()...)
 	if target.PlaylistItem > 0 {
 		args = append(args, "--playlist-items", strconv.Itoa(target.PlaylistItem))
 	}
@@ -422,12 +495,13 @@ func (s *Server) proxyForTask(useProxy bool) (string, error) {
 	return s.proxyURL, nil
 }
 
-func (s *Server) selectDownloadTarget(ctx context.Context, rawURL, proxyURL string) (downloadTarget, error) {
+func (s *Server) selectDownloadTarget(ctx context.Context, rawURL, proxyURL string, browserContext BrowserContext) (downloadTarget, error) {
 	target := downloadTarget{URL: rawURL}
 	args := []string{"-J", "--no-warnings", "--ignore-errors", rawURL}
 	if proxyURL != "" {
 		args = []string{"-J", "--no-warnings", "--ignore-errors", "--proxy", proxyURL, rawURL}
 	}
+	args = append(args[:len(args)-1], append(browserContext.YTDLPArgs(), rawURL)...)
 	cmd := exec.CommandContext(ctx, s.ytDLP, args...)
 	out, err := cmd.Output()
 	if err != nil {
@@ -747,6 +821,42 @@ func validateURL(raw string) error {
 		return errors.New("only http/https urls are supported")
 	}
 	return nil
+}
+
+func cleanHeaderName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	for _, r := range name {
+		if r <= 32 || r >= 127 || r == ':' {
+			return ""
+		}
+	}
+	parts := strings.Split(strings.ToLower(name), "-")
+	for i, part := range parts {
+		if part == "" {
+			return ""
+		}
+		parts[i] = strings.ToUpper(part[:1]) + part[1:]
+	}
+	return strings.Join(parts, "-")
+}
+
+func cleanHeaderValue(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.ReplaceAll(value, "\r", "")
+	value = strings.ReplaceAll(value, "\n", "")
+	return value
+}
+
+func blockedForwardHeader(name string) bool {
+	switch strings.ToLower(name) {
+	case "authorization", "host", "content-length", "connection", "transfer-encoding", "proxy-authorization":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Server) withToken(next http.HandlerFunc) http.HandlerFunc {

@@ -92,3 +92,36 @@ func TestRemoveString(t *testing.T) {
 		}
 	}
 }
+
+func TestBrowserContextSanitizedYTDLPArgs(t *testing.T) {
+	ctx := BrowserContext{
+		Cookie:    "sid=abc",
+		UserAgent: "Agent\nBad",
+		Referer:   "https://example.com/watch",
+		Headers: map[string]string{
+			"Accept-Language": "zh-CN,zh;q=0.9",
+			"Authorization":   "Bearer secret",
+			"Bad\nName":       "bad",
+		},
+	}.Sanitized()
+
+	if ctx.Headers["Cookie"] != "sid=abc" {
+		t.Fatalf("Cookie header = %q", ctx.Headers["Cookie"])
+	}
+	if ctx.Headers["User-Agent"] != "AgentBad" {
+		t.Fatalf("User-Agent header = %q", ctx.Headers["User-Agent"])
+	}
+	if _, ok := ctx.Headers["Authorization"]; ok {
+		t.Fatal("Authorization header should not be forwarded")
+	}
+
+	args := ctx.YTDLPArgs()
+	if len(args) == 0 {
+		t.Fatal("YTDLPArgs should include add-header args")
+	}
+	for i := 0; i < len(args); i += 2 {
+		if args[i] != "--add-header" {
+			t.Fatalf("args[%d] = %q, want --add-header", i, args[i])
+		}
+	}
+}
