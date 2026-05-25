@@ -3,7 +3,6 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -144,15 +143,6 @@ func TestTitleFromFilePath(t *testing.T) {
 	got := titleFromFilePath("/downloads/My Video [abc123].mp4")
 	if got != "My Video [abc123]" {
 		t.Fatalf("titleFromFilePath() = %q", got)
-	}
-}
-
-func TestDefaultYTDLPFormatPrefersBrowserCompatibleCodecs(t *testing.T) {
-	if !strings.Contains(defaultYTDLPFormat, "avc1") {
-		t.Fatal("defaultYTDLPFormat should prefer H.264/avc1")
-	}
-	if !strings.Contains(defaultYTDLPFormat, "mp4a") {
-		t.Fatal("defaultYTDLPFormat should prefer AAC/mp4a")
 	}
 }
 

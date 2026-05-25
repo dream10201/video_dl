@@ -135,7 +135,6 @@ type Server struct {
 	downloadDir string
 	tempRoot    string
 	ytDLP       string
-	ytDLPFormat string
 	ffmpeg      string
 	apiToken    string
 	proxyURL    string
@@ -177,14 +176,11 @@ type downloadTarget struct {
 
 var progressRE = regexp.MustCompile(`\[download\]\s+([0-9]+(?:\.[0-9]+)?)%`)
 
-const defaultYTDLPFormat = "bestvideo*[vcodec*=avc1][ext=mp4]+bestaudio[acodec*=mp4a][ext=m4a]/bestvideo*[vcodec*=avc1]+bestaudio[acodec*=mp4a]/best[ext=mp4]/best"
-
 func main() {
 	port := env("PORT", "8080")
 	downloadDir := env("DOWNLOAD_DIR", "downloads")
 	tempRoot := env("TEMP_DIR", defaultTempRoot())
 	ytDLP := env("YT_DLP_BIN", "yt-dlp")
-	ytDLPFormat := env("YT_DLP_FORMAT", defaultYTDLPFormat)
 	ffmpeg := env("FFMPEG_BIN", "ffmpeg")
 	apiToken := env("API_TOKEN", "")
 	proxyURL := env("PROXY_URL", "")
@@ -207,7 +203,6 @@ func main() {
 		downloadDir: downloadDir,
 		tempRoot:    tempRoot,
 		ytDLP:       ytDLP,
-		ytDLPFormat: ytDLPFormat,
 		ffmpeg:      ffmpeg,
 		apiToken:    apiToken,
 		proxyURL:    proxyURL,
@@ -454,7 +449,7 @@ func (s *Server) runTask(id string) {
 		"--ignore-errors",
 		"--no-keep-video",
 		"--windows-filenames",
-		"--format", s.ytDLPFormat,
+		"--format", "bestvideo*+bestaudio/best",
 		"--merge-output-format", "mp4",
 		"--ffmpeg-location", s.ffmpeg,
 		"--output", outputTemplate,
