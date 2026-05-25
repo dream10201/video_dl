@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
@@ -59,6 +60,7 @@ type Server struct {
 	downloadDir string
 	ytDLP       string
 	ffmpeg      string
+	apiToken    string
 }
 
 var progressRE = regexp.MustCompile(`\[download\]\s+([0-9]+(?:\.[0-9]+)?)%`)
@@ -68,8 +70,12 @@ func main() {
 	downloadDir := env("DOWNLOAD_DIR", "downloads")
 	ytDLP := env("YT_DLP_BIN", "yt-dlp")
 	ffmpeg := env("FFMPEG_BIN", "ffmpeg")
+	apiToken := env("API_TOKEN", "")
 	workers := envInt("WORKERS", max(1, min(2, runtime.NumCPU())))
 
+	if apiToken == "" {
+		log.Fatal("API_TOKEN is required")
+	}
 	if err := os.MkdirAll(downloadDir, 0o755); err != nil {
 		log.Fatalf("create download dir: %v", err)
 	}
@@ -81,6 +87,7 @@ func main() {
 		downloadDir: downloadDir,
 		ytDLP:       ytDLP,
 		ffmpeg:      ffmpeg,
+		apiToken:    apiToken,
 	}
 	for i := 0; i < workers; i++ {
 		go srv.worker()
@@ -88,8 +95,9 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", srv.handleIndex)
-	mux.HandleFunc("/api/tasks", srv.handleTasks)
-	mux.HandleFunc("/api/tasks/", srv.handleTask)
+	mux.HandleFunc("/api/downloads", srv.withToken(srv.handleCreateDownload))
+	mux.HandleFunc("/ui/tasks", srv.handleUITasks)
+	mux.HandleFunc("/ui/tasks/", srv.handleUITask)
 	mux.Handle("/downloads/", http.StripPrefix("/downloads/", http.FileServer(http.Dir(downloadDir))))
 
 	log.Printf("video_dl listening on :%s, workers=%d, download_dir=%s", port, workers, downloadDir)
@@ -112,7 +120,30 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(b)
 }
 
-func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleCreateDownload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	req.URL = strings.TrimSpace(req.URL)
+	if err := validateURL(req.URL); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	task := s.enqueue(req.URL)
+	writeJSON(w, http.StatusCreated, task)
+}
+
+func (s *Server) handleUITasks(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		s.mu.Lock()
@@ -137,18 +168,7 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		task := &Task{
-			ID:        newID(),
-			URL:       req.URL,
-			Status:    StatusQueued,
-			CreatedAt: time.Now().UTC(),
-			Logs:      []string{"任务已创建，等待下载"},
-		}
-		s.mu.Lock()
-		s.tasks[task.ID] = task
-		s.order = append(s.order, task.ID)
-		s.mu.Unlock()
-		s.queue <- task.ID
+		task := s.enqueue(req.URL)
 		writeJSON(w, http.StatusCreated, task)
 	default:
 		w.Header().Set("Allow", "GET, POST")
@@ -156,8 +176,8 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handleTask(w http.ResponseWriter, r *http.Request) {
-	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/tasks/"), "/")
+func (s *Server) handleUITask(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/ui/tasks/"), "/")
 	if len(parts) == 0 || parts[0] == "" {
 		http.NotFound(w, r)
 		return
@@ -189,6 +209,23 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.NotFound(w, r)
+}
+
+func (s *Server) enqueue(rawURL string) *Task {
+	task := &Task{
+		ID:        newID(),
+		URL:       rawURL,
+		Status:    StatusQueued,
+		CreatedAt: time.Now().UTC(),
+		Logs:      []string{"任务已创建，等待下载"},
+	}
+	s.mu.Lock()
+	s.tasks[task.ID] = task
+	s.order = append(s.order, task.ID)
+	cloned := cloneTask(task)
+	s.mu.Unlock()
+	s.queue <- task.ID
+	return cloned
 }
 
 func (s *Server) worker() {
@@ -355,6 +392,27 @@ func validateURL(raw string) error {
 		return errors.New("only http/https urls are supported")
 	}
 	return nil
+}
+
+func (s *Server) withToken(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.validToken(r) {
+			writeError(w, http.StatusUnauthorized, "invalid token")
+			return
+		}
+		next(w, r)
+	}
+}
+
+func (s *Server) validToken(r *http.Request) bool {
+	auth := strings.TrimSpace(r.Header.Get("Authorization"))
+	token := ""
+	if strings.HasPrefix(auth, "Bearer ") {
+		token = strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
+	} else {
+		token = r.Header.Get("X-API-Token")
+	}
+	return subtle.ConstantTimeCompare([]byte(token), []byte(s.apiToken)) == 1
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

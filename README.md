@@ -1,6 +1,6 @@
 # video_dl
 
-一个基于 `yt-dlp` 的视频下载服务：提供 HTTP API 和简单 Web 页面，提交网页或视频链接后自动按最高质量下载并用 `ffmpeg` 合并。
+一个基于 `yt-dlp` 的视频下载服务：提供新建下载 HTTP API 和简单 Web 页面，提交网页或视频链接后自动按最高质量下载并用 `ffmpeg` 合并。
 
 ## 本地运行
 
@@ -11,7 +11,7 @@
 - ffmpeg
 
 ```bash
-go run .
+API_TOKEN=your-secret-token go run .
 ```
 
 打开 `http://localhost:8080`。
@@ -19,6 +19,7 @@ go run .
 ## Docker 运行
 
 ```bash
+API_TOKEN=your-secret-token \
 docker compose up --build
 ```
 
@@ -26,32 +27,23 @@ docker compose up --build
 
 ## API
 
-创建任务：
+公开 API 只提供新建下载任务，并要求 token：
 
 ```bash
-curl -X POST http://localhost:8080/api/tasks \
+curl -X POST http://localhost:8080/api/downloads \
+  -H 'Authorization: Bearer your-secret-token' \
   -H 'Content-Type: application/json' \
   -d '{"url":"https://example.com/video"}'
 ```
 
-查看任务：
-
-```bash
-curl http://localhost:8080/api/tasks
-curl http://localhost:8080/api/tasks/<id>
-```
-
-取消任务：
-
-```bash
-curl -X POST http://localhost:8080/api/tasks/<id>/cancel
-```
+兼容 `X-API-Token: your-secret-token` 请求头。
 
 ## 配置
 
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `PORT` | `8080` | HTTP 服务端口 |
+| `API_TOKEN` | 无 | 公开 API token，必填 |
 | `DOWNLOAD_DIR` | `downloads` | 下载目录 |
 | `WORKERS` | `1` 或 `2` | 并发下载 worker 数 |
 | `YT_DLP_BIN` | `yt-dlp` | yt-dlp 可执行文件 |

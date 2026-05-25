@@ -7,4 +7,5 @@ services:
     volumes:
       - ./downloads:/app/downloads
     environment:
+      API_TOKEN: ${API_TOKEN:?set API_TOKEN}
       WORKERS: "1"

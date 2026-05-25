@@ -238,7 +238,7 @@
       const button = form.querySelector("button");
       button.disabled = true;
       try {
-        const res = await fetch("/api/tasks", {
+        const res = await fetch("/ui/tasks", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ url })
@@ -259,12 +259,12 @@
     refresh.addEventListener("click", loadTasks);
 
     async function cancelTask(id) {
-      await fetch(`/api/tasks/${id}/cancel`, { method: "POST" });
+      await fetch(`/ui/tasks/${id}/cancel`, { method: "POST" });
       await loadTasks();
     }
 
     async function loadTasks() {
-      const res = await fetch("/api/tasks");
+      const res = await fetch("/ui/tasks");
       const body = await res.json();
       render(body.tasks || []);
     }
