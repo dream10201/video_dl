@@ -63,6 +63,39 @@ type Server struct {
 	apiToken    string
 }
 
+type probeInfo struct {
+	Entries []probeEntry `json:"entries"`
+}
+
+type probeEntry struct {
+	Title          string        `json:"title"`
+	URL            string        `json:"url"`
+	Duration       float64       `json:"duration"`
+	Filesize       float64       `json:"filesize"`
+	FilesizeApprox float64       `json:"filesize_approx"`
+	Formats        []probeFormat `json:"formats"`
+}
+
+type probeFormat struct {
+	Filesize       float64 `json:"filesize"`
+	FilesizeApprox float64 `json:"filesize_approx"`
+	TBR            float64 `json:"tbr"`
+	VBR            float64 `json:"vbr"`
+	ABR            float64 `json:"abr"`
+	Width          float64 `json:"width"`
+	Height         float64 `json:"height"`
+	VCodec         string  `json:"vcodec"`
+	ACodec         string  `json:"acodec"`
+}
+
+type downloadTarget struct {
+	URL          string
+	PlaylistItem int
+	EntriesCount int
+	Title        string
+	Score        float64
+}
+
 var progressRE = regexp.MustCompile(`\[download\]\s+([0-9]+(?:\.[0-9]+)?)%`)
 
 func main() {
@@ -243,10 +276,21 @@ func (s *Server) runTask(id string) {
 	}
 	task.Status = StatusRunning
 	task.StartedAt = time.Now().UTC()
-	task.Logs = append(task.Logs, "开始调用 yt-dlp")
+	task.Logs = append(task.Logs, "开始分析页面视频")
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancelFuncs[id] = cancel
 	s.mu.Unlock()
+
+	target, err := s.selectDownloadTarget(ctx, task.URL)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			s.finishTask(id, StatusCanceled, "", "任务已取消")
+			return
+		}
+		s.finishTask(id, StatusFailed, "", err.Error())
+		return
+	}
+	s.addLog(id, target.describe())
 
 	outputTemplate := filepath.Join(s.downloadDir, "%(title).200B [%(id)s].%(ext)s")
 	args := []string{
@@ -259,8 +303,11 @@ func (s *Server) runTask(id string) {
 		"--ffmpeg-location", s.ffmpeg,
 		"--output", outputTemplate,
 		"--print", "after_move:filepath",
-		task.URL,
 	}
+	if target.PlaylistItem > 0 {
+		args = append(args, "--playlist-items", strconv.Itoa(target.PlaylistItem))
+	}
+	args = append(args, target.URL)
 	cmd := exec.CommandContext(ctx, s.ytDLP, args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -309,6 +356,113 @@ func (s *Server) runTask(id string) {
 	s.finishTask(id, StatusSucceeded, filePath, "")
 }
 
+func (s *Server) selectDownloadTarget(ctx context.Context, rawURL string) (downloadTarget, error) {
+	target := downloadTarget{URL: rawURL}
+	args := []string{"-J", "--no-warnings", "--ignore-errors", rawURL}
+	cmd := exec.CommandContext(ctx, s.ytDLP, args...)
+	out, err := cmd.Output()
+	if err != nil {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return target, ctx.Err()
+		}
+		return target, fmt.Errorf("probe page with yt-dlp: %w", err)
+	}
+
+	var info probeInfo
+	if err := json.Unmarshal(out, &info); err != nil {
+		return target, fmt.Errorf("parse yt-dlp probe output: %w", err)
+	}
+	if len(info.Entries) == 0 {
+		target.EntriesCount = 1
+		return target, nil
+	}
+
+	bestIndex := -1
+	bestScore := -1.0
+	for i, entry := range info.Entries {
+		score := entryScore(entry)
+		if score > bestScore {
+			bestScore = score
+			bestIndex = i
+		}
+	}
+	if bestIndex < 0 {
+		return target, nil
+	}
+
+	best := info.Entries[bestIndex]
+	target.PlaylistItem = bestIndex + 1
+	target.EntriesCount = len(info.Entries)
+	target.Title = best.Title
+	target.Score = bestScore
+	return target, nil
+}
+
+func (t downloadTarget) describe() string {
+	if t.EntriesCount <= 1 || t.PlaylistItem == 0 {
+		return "未发现多个候选视频，按原链接下载最高质量"
+	}
+	title := strings.TrimSpace(t.Title)
+	if title == "" {
+		title = "未命名视频"
+	}
+	return fmt.Sprintf("发现 %d 个候选视频，选择估算体积最大的第 %d 个：%s", t.EntriesCount, t.PlaylistItem, title)
+}
+
+func entryScore(entry probeEntry) float64 {
+	if entry.Filesize > 0 {
+		return entry.Filesize
+	}
+	if entry.FilesizeApprox > 0 {
+		return entry.FilesizeApprox
+	}
+
+	bestVideo := 0.0
+	bestAudio := 0.0
+	bestAny := 0.0
+	for _, format := range entry.Formats {
+		score := formatScore(format, entry.Duration)
+		if score <= 0 {
+			continue
+		}
+		if score > bestAny {
+			bestAny = score
+		}
+		if format.VCodec != "" && format.VCodec != "none" {
+			if score > bestVideo {
+				bestVideo = score
+			}
+			continue
+		}
+		if format.ACodec != "" && format.ACodec != "none" {
+			if score > bestAudio {
+				bestAudio = score
+			}
+		}
+	}
+	if bestVideo > 0 {
+		return bestVideo + bestAudio
+	}
+	return bestAny
+}
+
+func formatScore(format probeFormat, duration float64) float64 {
+	if format.Filesize > 0 {
+		return format.Filesize
+	}
+	if format.FilesizeApprox > 0 {
+		return format.FilesizeApprox
+	}
+	bitrate := maxFloat(format.TBR, format.VBR+format.ABR)
+	if bitrate > 0 && duration > 0 {
+		return bitrate * 1000 / 8 * duration
+	}
+	if format.Width > 0 && format.Height > 0 {
+		return format.Width * format.Height
+	}
+	return 0
+}
+
 func (s *Server) scanOutput(id string, r io.Reader) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -331,6 +485,14 @@ func (s *Server) scanOutput(id string, r io.Reader) {
 		}
 		s.mu.Unlock()
 	}
+}
+
+func (s *Server) addLog(id, line string) {
+	s.mu.Lock()
+	if task := s.tasks[id]; task != nil {
+		task.Logs = appendBounded(task.Logs, line, 300)
+	}
+	s.mu.Unlock()
 }
 
 func (s *Server) finishTask(id string, status TaskStatus, filePath, errText string) {
@@ -492,6 +654,13 @@ func min(a, b int) int {
 }
 
 func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func maxFloat(a, b float64) float64 {
 	if a > b {
 		return a
 	}
