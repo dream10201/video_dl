@@ -79,3 +79,16 @@ func TestFindFinalMediaPrefersVideoOverAudioSidecar(t *testing.T) {
 		t.Fatalf("findFinalMedia() = %q, want %q", got, video)
 	}
 }
+
+func TestRemoveString(t *testing.T) {
+	got := removeString([]string{"a", "b", "c"}, "b")
+	want := []string{"a", "c"}
+	if len(got) != len(want) {
+		t.Fatalf("removeString length = %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("removeString()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}

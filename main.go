@@ -216,8 +216,11 @@ func (s *Server) handleUITasks(w http.ResponseWriter, r *http.Request) {
 		}
 		task := s.enqueue(req.URL, req.UseProxy)
 		writeJSON(w, http.StatusCreated, task)
+	case http.MethodDelete:
+		deleted := s.deleteAllTasks()
+		writeJSON(w, http.StatusOK, map[string]int{"deleted": deleted})
 	default:
-		w.Header().Set("Allow", "GET, POST")
+		w.Header().Set("Allow", "GET, POST, DELETE")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
@@ -242,6 +245,15 @@ func (s *Server) handleUITask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, task)
+		return
+	}
+
+	if len(parts) == 1 && r.Method == http.MethodDelete {
+		if !s.deleteTask(id) {
+			writeError(w, http.StatusNotFound, "task not found")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 		return
 	}
 
@@ -334,6 +346,7 @@ func (s *Server) runTask(id string) {
 		"--continue",
 		"--ignore-errors",
 		"--no-keep-video",
+		"--windows-filenames",
 		"--format", "bestvideo*+bestaudio/best",
 		"--merge-output-format", "mp4",
 		"--ffmpeg-location", s.ffmpeg,
@@ -694,6 +707,34 @@ func (s *Server) cancelTask(id string) bool {
 	return false
 }
 
+func (s *Server) deleteTask(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.tasks[id]; !ok {
+		return false
+	}
+	if cancel, ok := s.cancelFuncs[id]; ok {
+		cancel()
+		delete(s.cancelFuncs, id)
+	}
+	delete(s.tasks, id)
+	s.order = removeString(s.order, id)
+	return true
+}
+
+func (s *Server) deleteAllTasks() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	deleted := len(s.tasks)
+	for _, cancel := range s.cancelFuncs {
+		cancel()
+	}
+	s.tasks = make(map[string]*Task)
+	s.order = nil
+	s.cancelFuncs = make(map[string]context.CancelFunc)
+	return deleted
+}
+
 func validateURL(raw string) error {
 	if raw == "" {
 		return errors.New("url is required")
@@ -759,6 +800,15 @@ func appendBounded(logs []string, line string, maxLines int) []string {
 		return logs[len(logs)-maxLines:]
 	}
 	return logs
+}
+
+func removeString(values []string, target string) []string {
+	for i, value := range values {
+		if value == target {
+			return append(values[:i], values[i+1:]...)
+		}
+	}
+	return values
 }
 
 func isTempDownloadFile(path string) bool {

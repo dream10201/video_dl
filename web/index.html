@@ -117,6 +117,13 @@
       gap: 12px;
       margin: 18px 0 10px;
     }
+    .toolbar-actions {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: end;
+    }
     .list {
       display: grid;
       gap: 10px;
@@ -131,9 +138,15 @@
     }
     .task-top {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-columns: auto minmax(0, 1fr) auto;
       gap: 12px;
       align-items: start;
+    }
+    .select-box {
+      width: 18px;
+      height: 18px;
+      margin: 4px 0 0;
+      accent-color: var(--accent);
     }
     .url {
       overflow-wrap: anywhere;
@@ -216,6 +229,7 @@
       header, .toolbar, .task-top { grid-template-columns: 1fr; display: grid; align-items: stretch; }
       form { grid-template-columns: 1fr; }
       .actions { justify-content: start; }
+      .toolbar-actions { justify-content: start; }
     }
   </style>
 </head>
@@ -237,7 +251,12 @@
 
     <div class="toolbar">
       <strong>任务列表</strong>
-      <span id="summary" class="subtle"></span>
+      <div class="toolbar-actions">
+        <span id="summary" class="subtle"></span>
+        <button class="secondary" id="select-all" type="button">全选</button>
+        <button class="secondary danger" id="delete-selected" type="button">删除选中</button>
+        <button class="secondary danger" id="delete-all" type="button">全部删除</button>
+      </div>
     </div>
     <section id="tasks" class="list"></section>
   </main>
@@ -249,6 +268,11 @@
     const input = document.querySelector("#url");
     const proxy = document.querySelector("#proxy");
     const refresh = document.querySelector("#refresh");
+    const selectAll = document.querySelector("#select-all");
+    const deleteSelected = document.querySelector("#delete-selected");
+    const deleteAll = document.querySelector("#delete-all");
+    const selected = new Set();
+    let currentTasks = [];
 
     const labels = {
       queued: "排队中",
@@ -284,10 +308,38 @@
     });
 
     refresh.addEventListener("click", loadTasks);
+    selectAll.addEventListener("click", () => {
+      const selectable = currentTasks.map((task) => task.id);
+      const allSelected = selectable.length > 0 && selectable.every((id) => selected.has(id));
+      selected.clear();
+      if (!allSelected) {
+        for (const id of selectable) selected.add(id);
+      }
+      render(currentTasks);
+    });
+    deleteSelected.addEventListener("click", async () => {
+      const ids = [...selected];
+      if (!ids.length) return;
+      if (!confirm(`删除选中的 ${ids.length} 条任务记录？运行中的任务会被取消。`)) return;
+      await Promise.all(ids.map((id) => deleteTask(id)));
+      selected.clear();
+      await loadTasks();
+    });
+    deleteAll.addEventListener("click", async () => {
+      if (!currentTasks.length) return;
+      if (!confirm("删除全部任务记录？运行中的任务会被取消。")) return;
+      await fetch("/ui/tasks", { method: "DELETE" });
+      selected.clear();
+      await loadTasks();
+    });
 
     async function cancelTask(id) {
       await fetch(`/ui/tasks/${id}/cancel`, { method: "POST" });
       await loadTasks();
+    }
+
+    async function deleteTask(id) {
+      await fetch(`/ui/tasks/${id}`, { method: "DELETE" });
     }
 
     async function loadTasks() {
@@ -297,7 +349,17 @@
     }
 
     function render(tasks) {
-      summary.textContent = tasks.length ? `${tasks.length} 个任务` : "";
+      currentTasks = tasks;
+      const liveIds = new Set(tasks.map((task) => task.id));
+      for (const id of [...selected]) {
+        if (!liveIds.has(id)) selected.delete(id);
+      }
+      summary.textContent = tasks.length ? `${tasks.length} 个任务，已选 ${selected.size}` : "";
+      selectAll.disabled = tasks.length === 0;
+      deleteSelected.disabled = selected.size === 0;
+      deleteAll.disabled = tasks.length === 0;
+      const allSelected = tasks.length > 0 && tasks.every((task) => selected.has(task.id));
+      selectAll.textContent = allSelected ? "取消全选" : "全选";
       if (!tasks.length) {
         list.innerHTML = `<div class="empty">暂无任务</div>`;
         return;
@@ -311,6 +373,7 @@
         const fileName = task.file_path ? task.file_path.split(/[\\/]/).pop() : "";
         el.innerHTML = `
           <div class="task-top">
+            <input class="select-box" type="checkbox" data-select="${task.id}" ${selected.has(task.id) ? "checked" : ""} aria-label="选择任务">
             <div>
               <div class="url">${escapeHTML(task.url)}</div>
               <div class="meta">
@@ -331,11 +394,25 @@
           <div class="actions">
             ${downloadable ? `<a href="/downloads/${encodeURIComponent(fileName)}" target="_blank" rel="noreferrer">打开文件</a>` : ""}
             ${(task.status === "queued" || task.status === "running") ? `<button class="secondary danger" data-cancel="${task.id}" type="button">取消</button>` : ""}
+            <button class="secondary danger" data-delete="${task.id}" type="button">删除</button>
           </div>
           <pre>${escapeHTML((task.logs || []).slice(-12).join("\n"))}</pre>
         `;
+        const checkbox = el.querySelector("[data-select]");
+        checkbox.addEventListener("change", () => {
+          if (checkbox.checked) selected.add(task.id);
+          else selected.delete(task.id);
+          render(currentTasks);
+        });
         const cancel = el.querySelector("[data-cancel]");
         if (cancel) cancel.addEventListener("click", () => cancelTask(task.id));
+        const remove = el.querySelector("[data-delete]");
+        remove.addEventListener("click", async () => {
+          if (!confirm("删除这条任务记录？运行中的任务会被取消。")) return;
+          await deleteTask(task.id);
+          selected.delete(task.id);
+          await loadTasks();
+        });
         list.appendChild(el);
       }
     }
