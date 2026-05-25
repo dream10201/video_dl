@@ -89,16 +89,20 @@ func (r DownloadRequest) BrowserContext() BrowserContext {
 
 func (c BrowserContext) Sanitized() BrowserContext {
 	headers := make(map[string]string)
+	cookie := cleanHeaderValue(c.Cookie)
 	for name, value := range c.Headers {
 		name = cleanHeaderName(name)
 		value = cleanHeaderValue(value)
 		if name == "" || value == "" || blockedForwardHeader(name) {
 			continue
 		}
+		if strings.EqualFold(name, "Cookie") {
+			if cookie == "" {
+				cookie = value
+			}
+			continue
+		}
 		headers[name] = value
-	}
-	if value := cleanHeaderValue(c.Cookie); value != "" {
-		headers["Cookie"] = value
 	}
 	if value := cleanHeaderValue(c.UserAgent); value != "" {
 		headers["User-Agent"] = value
@@ -106,11 +110,11 @@ func (c BrowserContext) Sanitized() BrowserContext {
 	if value := cleanHeaderValue(c.Referer); value != "" {
 		headers["Referer"] = value
 	}
-	return BrowserContext{Headers: headers}
+	return BrowserContext{Cookie: cookie, Headers: headers}
 }
 
 func (c BrowserContext) HasHeaders() bool {
-	return len(c.Headers) > 0
+	return c.Cookie != "" || len(c.Headers) > 0
 }
 
 func (c BrowserContext) YTDLPArgs() []string {
@@ -128,6 +132,61 @@ func (c BrowserContext) YTDLPArgs() []string {
 		args = append(args, "--add-header", name+":"+c.Headers[name])
 	}
 	return args
+}
+
+func (c BrowserContext) WriteCookieFile(rawURL, dir string) (string, error) {
+	if c.Cookie == "" {
+		return "", nil
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Hostname() == "" {
+		return "", errors.New("cannot create cookie file for invalid url")
+	}
+	pairs := parseCookiePairs(c.Cookie)
+	if len(pairs) == 0 {
+		return "", nil
+	}
+	path := filepath.Join(dir, "cookies.txt")
+	var b strings.Builder
+	b.WriteString("# Netscape HTTP Cookie File\n")
+	domain := u.Hostname()
+	secure := "FALSE"
+	if u.Scheme == "https" {
+		secure = "TRUE"
+	}
+	for _, pair := range pairs {
+		fmt.Fprintf(&b, "%s\tTRUE\t/\t%s\t0\t%s\t%s\n", domain, secure, pair.name, pair.value)
+	}
+	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
+		return "", fmt.Errorf("write cookie file: %w", err)
+	}
+	return path, nil
+}
+
+type cookiePair struct {
+	name  string
+	value string
+}
+
+func parseCookiePairs(raw string) []cookiePair {
+	var pairs []cookiePair
+	for _, part := range strings.Split(raw, ";") {
+		part = strings.TrimSpace(part)
+		if part == "" || !strings.Contains(part, "=") {
+			continue
+		}
+		name, value, _ := strings.Cut(part, "=")
+		name = strings.TrimSpace(name)
+		value = strings.TrimSpace(value)
+		if name == "" || strings.ContainsAny(name, "\t\r\n ;") {
+			continue
+		}
+		value = strings.ReplaceAll(value, "\t", "%09")
+		value = strings.ReplaceAll(value, "\r", "")
+		value = strings.ReplaceAll(value, "\n", "")
+		pairs = append(pairs, cookiePair{name: name, value: value})
+	}
+	return pairs
 }
 
 type Server struct {
@@ -422,18 +481,6 @@ func (s *Server) runTask(id string) {
 		s.addLog(id, "本任务携带浏览器上下文")
 	}
 
-	target, err := s.selectDownloadTarget(ctx, task.URL, proxyURL, browserContext)
-	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			s.finishTask(id, StatusCanceled, "", "任务已取消")
-			return
-		}
-		s.finishTask(id, StatusFailed, "", err.Error())
-		return
-	}
-	s.setTaskTitle(id, target.Title)
-	s.addLog(id, target.describe())
-
 	tempDir, err := os.MkdirTemp(s.tempRoot, id+"-")
 	if err != nil {
 		s.finishTask(id, StatusFailed, "", fmt.Sprintf("create temp dir: %v", err))
@@ -444,6 +491,24 @@ func (s *Server) runTask(id string) {
 			log.Printf("remove temp dir %s: %v", tempDir, err)
 		}
 	}()
+
+	cookieFile, err := browserContext.WriteCookieFile(task.URL, tempDir)
+	if err != nil {
+		s.finishTask(id, StatusFailed, "", err.Error())
+		return
+	}
+
+	target, err := s.selectDownloadTarget(ctx, task.URL, proxyURL, browserContext, cookieFile)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			s.finishTask(id, StatusCanceled, "", "任务已取消")
+			return
+		}
+		s.finishTask(id, StatusFailed, "", err.Error())
+		return
+	}
+	s.setTaskTitle(id, target.Title)
+	s.addLog(id, target.describe())
 
 	outputTemplate := filepath.Join(tempDir, "%(title).200B [%(id)s].%(ext)s")
 	args := []string{
@@ -462,6 +527,9 @@ func (s *Server) runTask(id string) {
 		args = append(args, "--proxy", proxyURL)
 	}
 	args = append(args, browserContext.YTDLPArgs()...)
+	if cookieFile != "" {
+		args = append(args, "--cookies", cookieFile)
+	}
 	if target.PlaylistItem > 0 {
 		args = append(args, "--playlist-items", strconv.Itoa(target.PlaylistItem))
 	}
@@ -529,13 +597,17 @@ func (s *Server) proxyForTask(useProxy bool) (string, error) {
 	return s.proxyURL, nil
 }
 
-func (s *Server) selectDownloadTarget(ctx context.Context, rawURL, proxyURL string, browserContext BrowserContext) (downloadTarget, error) {
+func (s *Server) selectDownloadTarget(ctx context.Context, rawURL, proxyURL string, browserContext BrowserContext, cookieFile string) (downloadTarget, error) {
 	target := downloadTarget{URL: rawURL}
 	args := []string{"-J", "--no-warnings", "--ignore-errors", rawURL}
 	if proxyURL != "" {
 		args = []string{"-J", "--no-warnings", "--ignore-errors", "--proxy", proxyURL, rawURL}
 	}
-	args = append(args[:len(args)-1], append(browserContext.YTDLPArgs(), rawURL)...)
+	extraArgs := browserContext.YTDLPArgs()
+	if cookieFile != "" {
+		extraArgs = append(extraArgs, "--cookies", cookieFile)
+	}
+	args = append(args[:len(args)-1], append(extraArgs, rawURL)...)
 	cmd := exec.CommandContext(ctx, s.ytDLP, args...)
 	out, err := commandOutput(cmd)
 	if err != nil {

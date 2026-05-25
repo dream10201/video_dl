@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -105,8 +106,11 @@ func TestBrowserContextSanitizedYTDLPArgs(t *testing.T) {
 		},
 	}.Sanitized()
 
-	if ctx.Headers["Cookie"] != "sid=abc" {
-		t.Fatalf("Cookie header = %q", ctx.Headers["Cookie"])
+	if ctx.Cookie != "sid=abc" {
+		t.Fatalf("Cookie = %q", ctx.Cookie)
+	}
+	if _, ok := ctx.Headers["Cookie"]; ok {
+		t.Fatal("Cookie should not be forwarded with --add-header")
 	}
 	if ctx.Headers["User-Agent"] != "AgentBad" {
 		t.Fatalf("User-Agent header = %q", ctx.Headers["User-Agent"])
@@ -123,6 +127,25 @@ func TestBrowserContextSanitizedYTDLPArgs(t *testing.T) {
 		if args[i] != "--add-header" {
 			t.Fatalf("args[%d] = %q, want --add-header", i, args[i])
 		}
+	}
+}
+
+func TestWriteCookieFile(t *testing.T) {
+	ctx := BrowserContext{Cookie: "sid=abc; token=a=b=c"}.Sanitized()
+	path, err := ctx.WriteCookieFile("https://www.bilibili.com/video/BV1", t.TempDir())
+	if err != nil {
+		t.Fatalf("WriteCookieFile returned error: %v", err)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read cookie file: %v", err)
+	}
+	text := string(content)
+	if !strings.Contains(text, "www.bilibili.com\tTRUE\t/\tTRUE\t0\tsid\tabc") {
+		t.Fatalf("cookie file missing sid cookie:\n%s", text)
+	}
+	if !strings.Contains(text, "www.bilibili.com\tTRUE\t/\tTRUE\t0\ttoken\ta=b=c") {
+		t.Fatalf("cookie file missing token cookie:\n%s", text)
 	}
 }
 
