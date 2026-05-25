@@ -64,12 +64,12 @@
       padding: 12px;
       margin-bottom: 18px;
     }
-    input, button {
+    input, textarea, button {
       height: 42px;
       border-radius: 6px;
       font: inherit;
     }
-    input {
+    input, textarea {
       min-width: 0;
       border: 1px solid var(--line);
       background: transparent;
@@ -77,7 +77,16 @@
       padding: 0 12px;
       outline: none;
     }
-    input:focus { border-color: var(--accent); }
+    textarea {
+      grid-column: 1 / -1;
+      width: 100%;
+      min-height: 138px;
+      height: auto;
+      padding: 10px 12px;
+      resize: vertical;
+      line-height: 1.45;
+    }
+    input:focus, textarea:focus { border-color: var(--accent); }
     .check {
       min-height: 42px;
       display: inline-flex;
@@ -263,6 +272,7 @@
       <input id="url" name="url" type="url" required placeholder="https://www.youtube.com/watch?v=..." autocomplete="off">
       <label class="check"><input id="proxy" name="proxy" type="checkbox">使用代理</label>
       <button type="submit">新建下载</button>
+      <textarea id="raw-headers" name="raw_headers" spellcheck="false" placeholder="可选：粘贴浏览器 Copy request headers，例如 Cookie、User-Agent、Referer、Accept-Language"></textarea>
     </form>
 
     <div class="toolbar">
@@ -283,12 +293,14 @@
     const form = document.querySelector("#create-form");
     const input = document.querySelector("#url");
     const proxy = document.querySelector("#proxy");
+    const rawHeaders = document.querySelector("#raw-headers");
     const refresh = document.querySelector("#refresh");
     const selectAll = document.querySelector("#select-all");
     const deleteSelected = document.querySelector("#delete-selected");
     const deleteAll = document.querySelector("#delete-all");
     const selected = new Set();
     let currentTasks = [];
+    rawHeaders.value = localStorage.getItem("video_dl_raw_headers") || "";
 
     const labels = {
       queued: "排队中",
@@ -302,13 +314,15 @@
       event.preventDefault();
       const url = input.value.trim();
       if (!url) return;
+      const headerText = rawHeaders.value.trim();
+      localStorage.setItem("video_dl_raw_headers", headerText);
       const button = form.querySelector("button");
       button.disabled = true;
       try {
         const res = await fetch("/ui/tasks", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url, proxy: proxy.checked })
+          body: JSON.stringify({ url, proxy: proxy.checked, raw_headers: headerText })
         });
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));

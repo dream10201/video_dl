@@ -57,12 +57,13 @@ type Task struct {
 }
 
 type DownloadRequest struct {
-	URL       string            `json:"url"`
-	UseProxy  bool              `json:"proxy"`
-	Cookie    string            `json:"cookie"`
-	UserAgent string            `json:"user_agent"`
-	Referer   string            `json:"referer"`
-	Headers   map[string]string `json:"headers"`
+	URL        string            `json:"url"`
+	UseProxy   bool              `json:"proxy"`
+	Cookie     string            `json:"cookie"`
+	UserAgent  string            `json:"user_agent"`
+	Referer    string            `json:"referer"`
+	Headers    map[string]string `json:"headers"`
+	RawHeaders string            `json:"raw_headers"`
 }
 
 type BrowserContext struct {
@@ -77,7 +78,7 @@ func (r DownloadRequest) BrowserContext() BrowserContext {
 		Cookie:    r.Cookie,
 		UserAgent: r.UserAgent,
 		Referer:   r.Referer,
-		Headers:   r.Headers,
+		Headers:   mergeHeaders(parseRawHeaders(r.RawHeaders), r.Headers),
 	}.Sanitized()
 }
 
@@ -297,10 +298,7 @@ func (s *Server) handleUITasks(w http.ResponseWriter, r *http.Request) {
 		s.mu.Unlock()
 		writeJSON(w, http.StatusOK, map[string]any{"tasks": tasks})
 	case http.MethodPost:
-		var req struct {
-			URL      string `json:"url"`
-			UseProxy bool   `json:"proxy"`
-		}
+		var req DownloadRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid json")
 			return
@@ -310,7 +308,7 @@ func (s *Server) handleUITasks(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		task := s.enqueue(req.URL, req.UseProxy, BrowserContext{})
+		task := s.enqueue(req.URL, req.UseProxy, req.BrowserContext())
 		writeJSON(w, http.StatusCreated, task)
 	case http.MethodDelete:
 		deleted := s.deleteAllTasks()
@@ -877,6 +875,35 @@ func cleanHeaderValue(value string) string {
 	value = strings.ReplaceAll(value, "\r", "")
 	value = strings.ReplaceAll(value, "\n", "")
 	return value
+}
+
+func parseRawHeaders(raw string) map[string]string {
+	headers := make(map[string]string)
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(strings.TrimRight(line, "\r"))
+		if line == "" || !strings.Contains(line, ":") {
+			continue
+		}
+		name, value, _ := strings.Cut(line, ":")
+		name = cleanHeaderName(name)
+		value = cleanHeaderValue(value)
+		if name == "" || value == "" || blockedForwardHeader(name) {
+			continue
+		}
+		headers[name] = value
+	}
+	return headers
+}
+
+func mergeHeaders(base map[string]string, overrides map[string]string) map[string]string {
+	merged := make(map[string]string)
+	for name, value := range base {
+		merged[name] = value
+	}
+	for name, value := range overrides {
+		merged[name] = value
+	}
+	return merged
 }
 
 func mediaContentType(name string) string {

@@ -138,3 +138,26 @@ func TestMediaContentType(t *testing.T) {
 		}
 	}
 }
+
+func TestParseRawHeadersFromBrowserCopy(t *testing.T) {
+	raw := "GET / HTTP/2\n" +
+		"Host: www.bilibili.com\n" +
+		"User-Agent: Mozilla/5.0\n" +
+		"Accept-Language: zh-CN\n" +
+		"Connection: keep-alive\n" +
+		"Cookie: sid=secret; bili_jct=token\n"
+
+	headers := parseRawHeaders(raw)
+	if headers["User-Agent"] != "Mozilla/5.0" {
+		t.Fatalf("User-Agent = %q", headers["User-Agent"])
+	}
+	if headers["Cookie"] != "sid=secret; bili_jct=token" {
+		t.Fatalf("Cookie = %q", headers["Cookie"])
+	}
+	if _, ok := headers["Host"]; ok {
+		t.Fatal("Host should be filtered")
+	}
+	if _, ok := headers["Connection"]; ok {
+		t.Fatal("Connection should be filtered")
+	}
+}
