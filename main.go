@@ -155,7 +155,7 @@ func (c BrowserContext) WriteCookieFile(rawURL, dir string) (string, error) {
 		secure = "TRUE"
 	}
 	for _, pair := range pairs {
-		fmt.Fprintf(&b, "%s\tTRUE\t/\t%s\t0\t%s\t%s\n", domain, secure, pair.name, pair.value)
+		fmt.Fprintf(&b, "%s\tFALSE\t/\t%s\t0\t%s\t%s\n", domain, secure, pair.name, pair.value)
 	}
 	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
 		return "", fmt.Errorf("write cookie file: %w", err)

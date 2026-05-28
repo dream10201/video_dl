@@ -141,10 +141,10 @@ func TestWriteCookieFile(t *testing.T) {
 		t.Fatalf("read cookie file: %v", err)
 	}
 	text := string(content)
-	if !strings.Contains(text, "www.bilibili.com\tTRUE\t/\tTRUE\t0\tsid\tabc") {
+	if !strings.Contains(text, "www.bilibili.com\tFALSE\t/\tTRUE\t0\tsid\tabc") {
 		t.Fatalf("cookie file missing sid cookie:\n%s", text)
 	}
-	if !strings.Contains(text, "www.bilibili.com\tTRUE\t/\tTRUE\t0\ttoken\ta=b=c") {
+	if !strings.Contains(text, "www.bilibili.com\tFALSE\t/\tTRUE\t0\ttoken\ta=b=c") {
 		t.Fatalf("cookie file missing token cookie:\n%s", text)
 	}
 }
