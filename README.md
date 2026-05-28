@@ -33,8 +33,8 @@ Web 新建任务表单支持粘贴浏览器 DevTools 的 `Copy request headers` 
 
 安装 `video-dl-userscript.user.js` 后，在任意网页的视频/音频元素上会出现下载按钮：
 
-- 左键：提交当前页面 URL，后端会自动选择页面里估算体积最大的视频
-- Shift+左键：提交当前媒体直链；如果是 `blob:` 链接会自动回退到当前页面 URL
+- “页面/直链”：控制下载按钮提交当前页面 URL，还是提交当前媒体直链；`blob:` 链接会自动回退到当前页面 URL
+- 下载按钮：按当前“页面/直链”模式提交；按住 Shift 可临时反向使用另一种模式
 - “代理开/关”：控制该站点提交任务时的 `proxy` 参数，实际代理地址由后端 `PROXY_URL` 环境变量提供
 - “CK开/关”：控制该站点提交任务时是否携带 `document.cookie`
 - 脚本会随任务提交当前页面可读取的 Cookie、User-Agent、Referer、Accept-Language 等上下文，方便后端访问需要登录态或防盗链的网站

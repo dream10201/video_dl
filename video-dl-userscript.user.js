@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video DL 页面下载助手
 // @namespace    https://github.com/dream10201/video_dl
-// @version      2.2.0
+// @version      2.3.0
 // @description  在网页视频/音频上显示下载按钮，将当前页面或媒体直链连同浏览器上下文提交到 video_dl 服务。
 // @author       dream10201
 // @match        *://*/*
@@ -24,6 +24,7 @@
     };
     const PROXY_KEY_PREFIX = 'VIDEO_DL_PROXY_';
     const COOKIE_KEY_PREFIX = 'VIDEO_DL_COOKIE_';
+    const MODE_KEY_PREFIX = 'VIDEO_DL_MODE_';
     const mediaMap = new WeakMap();
 
     GM.addStyle(`
@@ -57,6 +58,8 @@
         .video-dl-btn.proxy-off { background: #66707a; }
         .video-dl-btn.cookie-on { background: #7c3aed; }
         .video-dl-btn.cookie-off { background: #66707a; }
+        .video-dl-btn.mode-page { background: #0f766e; }
+        .video-dl-btn.mode-direct { background: #2563eb; }
         .video-dl-btn.error { background: #b42318; }
         .video-dl-btn.ok { background: #287d3c; }
         .video-dl-overlay {
@@ -143,6 +146,10 @@
         return `${COOKIE_KEY_PREFIX}${location.host}`;
     }
 
+    function getModeKey() {
+        return `${MODE_KEY_PREFIX}${location.host}`;
+    }
+
     async function createOverlay(media) {
         if (mediaMap.has(media)) return;
 
@@ -152,7 +159,7 @@
         const downloadButton = document.createElement('button');
         downloadButton.className = 'video-dl-btn';
         downloadButton.textContent = '下载';
-        downloadButton.title = '左键：提交当前页面，让服务自动选择最大视频\nShift+左键：提交媒体直链；blob 链接会回退到当前页面';
+        downloadButton.title = '按当前模式提交下载；按住 Shift 可临时反向使用页面/直链模式';
 
         const proxyButton = document.createElement('button');
         updateProxyButton(proxyButton, await GM.getValue(getProxyKey(), false));
@@ -160,14 +167,25 @@
         const cookieButton = document.createElement('button');
         updateCookieButton(cookieButton, await GM.getValue(getCookieKey(), true));
 
-        container.append(downloadButton, proxyButton, cookieButton);
+        const modeButton = document.createElement('button');
+        updateModeButton(modeButton, await GM.getValue(getModeKey(), 'page'));
+
+        container.append(downloadButton, modeButton, proxyButton, cookieButton);
         document.body.appendChild(container);
 
         downloadButton.addEventListener('click', async (event) => {
             event.preventDefault();
             event.stopPropagation();
-            const direct = event.shiftKey;
-            await submitDownload(media, downloadButton, direct);
+            await submitDownload(media, downloadButton, event.shiftKey);
+        });
+
+        modeButton.addEventListener('click', async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const current = await GM.getValue(getModeKey(), 'page');
+            const next = current === 'direct' ? 'page' : 'direct';
+            await GM.setValue(getModeKey(), next);
+            updateModeButton(modeButton, next);
         });
 
         proxyButton.addEventListener('click', async (event) => {
@@ -198,7 +216,7 @@
                 }
                 container.style.display = 'flex';
                 container.style.top = `${Math.max(0, rect.top + window.scrollY + 6)}px`;
-                container.style.left = `${Math.max(0, rect.right + window.scrollX - 196)}px`;
+                container.style.left = `${Math.max(0, rect.right + window.scrollX - 260)}px`;
                 container.classList.toggle('visible', media.matches(':hover') || container.matches(':hover'));
             },
             remove() {
@@ -223,7 +241,14 @@
         button.title = '切换当前站点是否随任务发送 document.cookie';
     }
 
-    async function submitDownload(media, button, direct) {
+    function updateModeButton(button, mode) {
+        const direct = mode === 'direct';
+        button.textContent = direct ? '直链' : '页面';
+        button.className = `video-dl-btn ${direct ? 'mode-direct' : 'mode-page'}`;
+        button.title = direct ? '当前提交媒体直链；blob 链接会回退到页面' : '当前提交页面 URL，让后端自动选择最大视频';
+    }
+
+    async function submitDownload(media, button, invertMode) {
         const backend = normalizeBackend(await GM.getValue(CONFIG_KEYS.BACKEND, ''));
         const token = (await GM.getValue(CONFIG_KEYS.TOKEN, '')).trim();
         if (!backend || !token) {
@@ -232,6 +257,8 @@
         }
 
         const mediaSrc = getMediaSrc(media);
+        const mode = await GM.getValue(getModeKey(), 'page');
+        const direct = invertMode ? mode !== 'direct' : mode === 'direct';
         const targetURL = direct && isHttpURL(mediaSrc) ? mediaSrc : location.href;
         const useProxy = await GM.getValue(getProxyKey(), false);
         const useCookie = await GM.getValue(getCookieKey(), true);
