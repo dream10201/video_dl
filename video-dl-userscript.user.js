@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video DL 页面下载助手
 // @namespace    https://github.com/dream10201/video_dl
-// @version      2.3.0
+// @version      2.4.0
 // @description  在网页视频/音频上显示下载按钮，将当前页面或媒体直链连同浏览器上下文提交到 video_dl 服务。
 // @author       dream10201
 // @match        *://*/*
@@ -32,6 +32,7 @@
             position: fixed;
             z-index: 2147483647;
             display: flex;
+            align-items: start;
             gap: 6px;
             font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             pointer-events: auto;
@@ -62,6 +63,29 @@
         .video-dl-btn.mode-direct { background: #2563eb; }
         .video-dl-btn.error { background: #b42318; }
         .video-dl-btn.ok { background: #287d3c; }
+        .video-dl-menu-wrap {
+            position: relative;
+        }
+        .video-dl-menu {
+            position: absolute;
+            top: 34px;
+            right: 0;
+            display: none;
+            grid-template-columns: 1fr;
+            gap: 6px;
+            min-width: 74px;
+            padding: 6px;
+            border-radius: 8px;
+            background: rgba(17, 24, 39, .92);
+            box-shadow: 0 6px 18px rgba(0,0,0,.28);
+        }
+        .video-dl-menu.open {
+            display: grid;
+        }
+        .video-dl-menu .video-dl-btn {
+            width: 100%;
+            box-shadow: none;
+        }
         .video-dl-overlay {
             position: fixed;
             inset: 0;
@@ -170,7 +194,18 @@
         const modeButton = document.createElement('button');
         updateModeButton(modeButton, await GM.getValue(getModeKey(), 'page'));
 
-        container.append(downloadButton, modeButton, proxyButton, cookieButton);
+        const menuWrap = document.createElement('div');
+        menuWrap.className = 'video-dl-menu-wrap';
+        const menuButton = document.createElement('button');
+        menuButton.className = 'video-dl-btn';
+        menuButton.textContent = '选项';
+        menuButton.title = '展开页面/直链、代理、Cookie 选项';
+        const menu = document.createElement('div');
+        menu.className = 'video-dl-menu';
+        menu.append(modeButton, proxyButton, cookieButton);
+        menuWrap.append(menuButton, menu);
+
+        container.append(downloadButton, menuWrap);
         document.body.appendChild(container);
 
         downloadButton.addEventListener('click', async (event) => {
@@ -186,6 +221,12 @@
             const next = current === 'direct' ? 'page' : 'direct';
             await GM.setValue(getModeKey(), next);
             updateModeButton(modeButton, next);
+        });
+
+        menuButton.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            menu.classList.toggle('open');
         });
 
         proxyButton.addEventListener('click', async (event) => {
@@ -204,6 +245,13 @@
             updateCookieButton(cookieButton, next);
         });
 
+        const closeMenuOnOutsideClick = (event) => {
+            if (!container.contains(event.target)) {
+                menu.classList.remove('open');
+            }
+        };
+        document.addEventListener('click', closeMenuOnOutsideClick);
+
         const controller = {
             container,
             media,
@@ -216,10 +264,11 @@
                 }
                 container.style.display = 'flex';
                 container.style.top = `${Math.max(0, rect.top + window.scrollY + 6)}px`;
-                container.style.left = `${Math.max(0, rect.right + window.scrollX - 260)}px`;
+                container.style.left = `${Math.max(0, rect.right + window.scrollX - 92)}px`;
                 container.classList.toggle('visible', media.matches(':hover') || container.matches(':hover'));
             },
             remove() {
+                document.removeEventListener('click', closeMenuOnOutsideClick);
                 container.remove();
                 mediaMap.delete(media);
             }
