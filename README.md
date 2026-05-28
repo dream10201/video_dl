@@ -36,6 +36,7 @@ Web 新建任务表单支持粘贴浏览器 DevTools 的 `Copy request headers` 
 - 左键：提交当前页面 URL，后端会自动选择页面里估算体积最大的视频
 - Shift+左键：提交当前媒体直链；如果是 `blob:` 链接会自动回退到当前页面 URL
 - “代理开/关”：控制该站点提交任务时的 `proxy` 参数，实际代理地址由后端 `PROXY_URL` 环境变量提供
+- “CK开/关”：控制该站点提交任务时是否携带 `document.cookie`
 - 脚本会随任务提交当前页面可读取的 Cookie、User-Agent、Referer、Accept-Language 等上下文，方便后端访问需要登录态或防盗链的网站
 
 首次使用需在油猴菜单里打开 `Video DL 设置`，填写后端地址和 `API_TOKEN`。

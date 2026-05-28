@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video DL 页面下载助手
 // @namespace    https://github.com/dream10201/video_dl
-// @version      2.1.0
+// @version      2.2.0
 // @description  在网页视频/音频上显示下载按钮，将当前页面或媒体直链连同浏览器上下文提交到 video_dl 服务。
 // @author       dream10201
 // @match        *://*/*
@@ -23,6 +23,7 @@
         TOKEN: 'VIDEO_DL_API_TOKEN'
     };
     const PROXY_KEY_PREFIX = 'VIDEO_DL_PROXY_';
+    const COOKIE_KEY_PREFIX = 'VIDEO_DL_COOKIE_';
     const mediaMap = new WeakMap();
 
     GM.addStyle(`
@@ -54,6 +55,8 @@
         .video-dl-btn:hover { filter: brightness(1.08); }
         .video-dl-btn.proxy-on { background: #287d3c; }
         .video-dl-btn.proxy-off { background: #66707a; }
+        .video-dl-btn.cookie-on { background: #7c3aed; }
+        .video-dl-btn.cookie-off { background: #66707a; }
         .video-dl-btn.error { background: #b42318; }
         .video-dl-btn.ok { background: #287d3c; }
         .video-dl-overlay {
@@ -136,6 +139,10 @@
         return `${PROXY_KEY_PREFIX}${location.host}`;
     }
 
+    function getCookieKey() {
+        return `${COOKIE_KEY_PREFIX}${location.host}`;
+    }
+
     async function createOverlay(media) {
         if (mediaMap.has(media)) return;
 
@@ -150,7 +157,10 @@
         const proxyButton = document.createElement('button');
         updateProxyButton(proxyButton, await GM.getValue(getProxyKey(), false));
 
-        container.append(downloadButton, proxyButton);
+        const cookieButton = document.createElement('button');
+        updateCookieButton(cookieButton, await GM.getValue(getCookieKey(), true));
+
+        container.append(downloadButton, proxyButton, cookieButton);
         document.body.appendChild(container);
 
         downloadButton.addEventListener('click', async (event) => {
@@ -168,6 +178,14 @@
             updateProxyButton(proxyButton, next);
         });
 
+        cookieButton.addEventListener('click', async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const next = !(await GM.getValue(getCookieKey(), true));
+            await GM.setValue(getCookieKey(), next);
+            updateCookieButton(cookieButton, next);
+        });
+
         const controller = {
             container,
             media,
@@ -180,7 +198,7 @@
                 }
                 container.style.display = 'flex';
                 container.style.top = `${Math.max(0, rect.top + window.scrollY + 6)}px`;
-                container.style.left = `${Math.max(0, rect.right + window.scrollX - 118)}px`;
+                container.style.left = `${Math.max(0, rect.right + window.scrollX - 196)}px`;
                 container.classList.toggle('visible', media.matches(':hover') || container.matches(':hover'));
             },
             remove() {
@@ -199,6 +217,12 @@
         button.title = '切换当前站点是否使用后端 PROXY_URL';
     }
 
+    function updateCookieButton(button, enabled) {
+        button.textContent = enabled ? 'CK开' : 'CK关';
+        button.className = `video-dl-btn ${enabled ? 'cookie-on' : 'cookie-off'}`;
+        button.title = '切换当前站点是否随任务发送 document.cookie';
+    }
+
     async function submitDownload(media, button, direct) {
         const backend = normalizeBackend(await GM.getValue(CONFIG_KEYS.BACKEND, ''));
         const token = (await GM.getValue(CONFIG_KEYS.TOKEN, '')).trim();
@@ -210,6 +234,7 @@
         const mediaSrc = getMediaSrc(media);
         const targetURL = direct && isHttpURL(mediaSrc) ? mediaSrc : location.href;
         const useProxy = await GM.getValue(getProxyKey(), false);
+        const useCookie = await GM.getValue(getCookieKey(), true);
         const originalText = button.textContent;
         const originalClass = button.className;
 
@@ -226,7 +251,7 @@
             data: JSON.stringify({
                 url: targetURL,
                 proxy: useProxy,
-                cookie: document.cookie || '',
+                cookie: useCookie ? (document.cookie || '') : '',
                 user_agent: navigator.userAgent || '',
                 referer: location.href,
                 headers: collectBrowserHeaders()
