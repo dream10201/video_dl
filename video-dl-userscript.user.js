@@ -24,7 +24,6 @@
     };
     const PROXY_KEY_PREFIX = 'VIDEO_DL_PROXY_';
     const COOKIE_KEY_PREFIX = 'VIDEO_DL_COOKIE_';
-    const MODE_KEY_PREFIX = 'VIDEO_DL_MODE_';
     const mediaMap = new WeakMap();
 
     GM.addStyle(`
@@ -59,8 +58,6 @@
         .video-dl-btn.proxy-off { background: #66707a; }
         .video-dl-btn.cookie-on { background: #7c3aed; }
         .video-dl-btn.cookie-off { background: #66707a; }
-        .video-dl-btn.mode-page { background: #0f766e; }
-        .video-dl-btn.mode-direct { background: #2563eb; }
         .video-dl-btn.error { background: #b42318; }
         .video-dl-btn.ok { background: #287d3c; }
         .video-dl-menu-wrap {
@@ -170,10 +167,6 @@
         return `${COOKIE_KEY_PREFIX}${location.host}`;
     }
 
-    function getModeKey() {
-        return `${MODE_KEY_PREFIX}${location.host}`;
-    }
-
     async function createOverlay(media) {
         if (mediaMap.has(media)) return;
 
@@ -183,7 +176,7 @@
         const downloadButton = document.createElement('button');
         downloadButton.className = 'video-dl-btn';
         downloadButton.textContent = '下载';
-        downloadButton.title = '按当前模式提交下载；按住 Shift 可临时反向使用页面/直链模式';
+        downloadButton.title = '优先提交媒体直链；blob 或无直链时提交页面 URL；按住 Shift 强制提交页面 URL';
 
         const proxyButton = document.createElement('button');
         updateProxyButton(proxyButton, await GM.getValue(getProxyKey(), false));
@@ -191,18 +184,15 @@
         const cookieButton = document.createElement('button');
         updateCookieButton(cookieButton, await GM.getValue(getCookieKey(), true));
 
-        const modeButton = document.createElement('button');
-        updateModeButton(modeButton, await GM.getValue(getModeKey(), 'page'));
-
         const menuWrap = document.createElement('div');
         menuWrap.className = 'video-dl-menu-wrap';
         const menuButton = document.createElement('button');
         menuButton.className = 'video-dl-btn';
         menuButton.textContent = '选项';
-        menuButton.title = '展开页面/直链、代理、Cookie 选项';
+        menuButton.title = '展开代理、Cookie 选项';
         const menu = document.createElement('div');
         menu.className = 'video-dl-menu';
-        menu.append(modeButton, proxyButton, cookieButton);
+        menu.append(proxyButton, cookieButton);
         menuWrap.append(menuButton, menu);
 
         container.append(downloadButton, menuWrap);
@@ -212,15 +202,6 @@
             event.preventDefault();
             event.stopPropagation();
             await submitDownload(media, downloadButton, event.shiftKey);
-        });
-
-        modeButton.addEventListener('click', async (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            const current = await GM.getValue(getModeKey(), 'page');
-            const next = current === 'direct' ? 'page' : 'direct';
-            await GM.setValue(getModeKey(), next);
-            updateModeButton(modeButton, next);
         });
 
         menuButton.addEventListener('click', (event) => {
@@ -290,14 +271,7 @@
         button.title = '切换当前站点是否随任务发送 document.cookie';
     }
 
-    function updateModeButton(button, mode) {
-        const direct = mode === 'direct';
-        button.textContent = direct ? '直链' : '页面';
-        button.className = `video-dl-btn ${direct ? 'mode-direct' : 'mode-page'}`;
-        button.title = direct ? '当前提交媒体直链；blob 链接会回退到页面' : '当前提交页面 URL，让后端自动选择最大视频';
-    }
-
-    async function submitDownload(media, button, invertMode) {
+    async function submitDownload(media, button, forcePage) {
         const backend = normalizeBackend(await GM.getValue(CONFIG_KEYS.BACKEND, ''));
         const token = (await GM.getValue(CONFIG_KEYS.TOKEN, '')).trim();
         if (!backend || !token) {
@@ -306,9 +280,7 @@
         }
 
         const mediaSrc = getMediaSrc(media);
-        const mode = await GM.getValue(getModeKey(), 'page');
-        const direct = invertMode ? mode !== 'direct' : mode === 'direct';
-        const targetURL = direct && isHttpURL(mediaSrc) ? mediaSrc : location.href;
+        const targetURL = !forcePage && isHttpURL(mediaSrc) ? mediaSrc : location.href;
         const useProxy = await GM.getValue(getProxyKey(), false);
         const useCookie = await GM.getValue(getCookieKey(), true);
         const originalText = button.textContent;
@@ -335,7 +307,7 @@
             responseType: 'json',
             onload(response) {
                 if (response.status >= 200 && response.status < 300) {
-                    button.textContent = direct && targetURL === mediaSrc ? '已提交直链' : '已提交页面';
+                    button.textContent = targetURL === mediaSrc ? '已提交直链' : '已提交页面';
                     button.className = 'video-dl-btn ok';
                     return;
                 }
