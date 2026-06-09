@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Video DL 页面下载助手
 // @namespace    https://github.com/dream10201/video_dl
-// @version      2.4.0
+// @version      2.4.1
 // @description  在网页视频/音频上显示下载按钮，将当前页面或媒体直链连同浏览器上下文提交到 video_dl 服务。
 // @author       dream10201
 // @match        *://*/*
